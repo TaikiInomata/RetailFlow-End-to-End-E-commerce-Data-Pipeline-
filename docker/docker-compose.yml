@@ -13,6 +13,8 @@ volumes:
     driver: local
   retailflow_kafka_data:
     driver: local
+  retailflow_minio_data:
+    driver: local
 
 services:
   postgres:
@@ -49,10 +51,10 @@ services:
     image: ${ZOOKEEPER_IMAGE}
     container_name: retailflow_zookeeper
     ports:
-      - "${ZOOKEEPER_PORT}:${ZOOKEEPER_CLIENT_PORT}"
+      - "${ZOOKEEPER_PORT}:2181"
     restart: unless-stopped
     environment:
-      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
       KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr,stat"  # Bật lệnh ruok cho healthcheck
     volumes:
@@ -62,7 +64,7 @@ services:
       - retailflow_network
     healthcheck:
       # Dùng bash /dev/tcp thay vì nc vì image confluentinc không có nc (netcat)
-      test: [ "CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/${ZOOKEEPER_CLIENT_PORT}; echo ruok >&3; grep -q imok <&3" ]
+      test: [ "CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/2181; echo ruok >&3; grep -q imok <&3" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -77,13 +79,13 @@ services:
       zookeeper:
         condition: service_healthy
     ports:
-      - "${KAFKA_PORT}:${KAFKA_CLIENT_PORT}"
+      - "${KAFKA_PORT}:9092"
     restart: unless-stopped
     environment:
       KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:${ZOOKEEPER_CLIENT_PORT}'
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://localhost:${KAFKA_PORT}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR}
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_REBALANCE_DELAY}
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
@@ -93,7 +95,7 @@ services:
       - retailflow_network
     healthcheck:
       # Dùng cub kafka-ready thay vì kafka-topics vì cub nhẹ hơn (không khởi động JVM mới mỗi lần check)
-      test: [ "CMD", "bash", "-c", "cub kafka-ready -b localhost:${KAFKA_INTERNAL_PORT} 1 20" ]
+      test: [ "CMD", "bash", "-c", "cub kafka-ready -b localhost:29092 1 20" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -110,10 +112,10 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "${DEBEZIUM_PORT}:${DEBEZIUM_CLIENT_PORT}"
+      - "${DEBEZIUM_PORT}:8083"
     restart: unless-stopped
     environment:
-      BOOTSTRAP_SERVERS: kafka:${KAFKA_INTERNAL_PORT}
+      BOOTSTRAP_SERVERS: kafka:29092
       GROUP_ID: ${DEBEZIUM_GROUP_ID}
       CONFIG_STORAGE_TOPIC: ${DEBEZIUM_CONFIG_TOPIC}
       OFFSET_STORAGE_TOPIC: ${DEBEZIUM_OFFSET_TOPIC}
@@ -129,10 +131,31 @@ services:
     networks:
       - retailflow_network
     healthcheck:
-      test: [ "CMD", "bash", "-c", "curl -sf http://localhost:${DEBEZIUM_CLIENT_PORT}/ || exit 1" ]
+      test: [ "CMD", "bash", "-c", "curl -sf http://localhost:8083/ || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 45s  # Debezium khởi động chậm hơn Kafka
+      start_period: 45s 
+  minio:
+    image: ${MINIO_IMAGE}
+    container_name: retailflow_minio
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_UI_PORT}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - retailflow_minio_data:/data
+    networks:
+      - retailflow_network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s 
 
     
