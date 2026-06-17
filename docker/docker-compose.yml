@@ -1,4 +1,3 @@
-
 networks:
   retailflow_network:
     driver: bridge
@@ -15,13 +14,14 @@ volumes:
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: ${POSTGRES_IMAGE}
     container_name: retailflow_postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=${PG_MAX_WAL_SENDERS}", "-c", "max_replication_slots=${PG_MAX_REPLICATION_SLOTS}", "-c", "wal_keep_size=${PG_WAL_KEEP_SIZE}" ]
     ports:
       - "${DB_PORT}:5432"
     volumes:
@@ -29,7 +29,7 @@ services:
     networks:
       - retailflow_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
       interval: 10s # Cứ 10 giây hỏi một lần
       timeout: 5s # Đợi 5 giây nếu không trả lời coi như fail
       retries: 5 # Hỏi 5 lần mà fail thì kết luận container đã sập
@@ -38,22 +38,22 @@ services:
   # ZOOKEEPER - Người quản lý cụm (Cluster Manager)
   # =========================================
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.4.4
+    image: ${ZOOKEEPER_IMAGE}
     container_name: retailflow_zookeeper
     ports:
-      - "2181:2181"
+      - "${ZOOKEEPER_PORT}:${ZOOKEEPER_CLIENT_PORT}"
     restart: unless-stopped
     environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
     volumes:
       - retailflow_zookeeper_data:/var/lib/zookeeper/data
       - retailflow_zookeeper_log:/var/lib/zookeeper/log
     networks:
       - retailflow_network
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
-      interval: 10s 
+      test: [ "CMD", "bash", "-c", "echo ruok | nc -w 2 localhost ${ZOOKEEPER_CLIENT_PORT} | grep imok" ]
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
@@ -61,29 +61,30 @@ services:
   # KAFKA - Trạm trung chuyển dữ liệu (Message Broker)
   # =========================================
   kafka:
-    image: confluentinc/cp-kafka:7.4.4
+    image: ${KAFKA_IMAGE}
     container_name: retailflow_kafka
     depends_on:
       zookeeper:
         condition: service_healthy
     ports:
-      - "9092:9092"
+      - "${KAFKA_PORT}:${KAFKA_CLIENT_PORT}"
     restart: unless-stopped
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:${ZOOKEEPER_CLIENT_PORT}'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://${KAFKA_HOST}:${KAFKA_PORT}
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR}
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_REBALANCE_DELAY}
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
     volumes:
       - retailflow_kafka_data:/var/lib/kafka/data
     networks:
       - retailflow_network
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      # Healthcheck chạy BÊN TRONG container → dùng localhost + KAFKA_INTERNAL_PORT (PLAINTEXT listener)
+      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:${KAFKA_INTERNAL_PORT} --list || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 30s  # Kafka cần thời gian khởi động lâu hơn
+      start_period: 30s
