@@ -1,3 +1,5 @@
+name: retailflow
+
 networks:
   retailflow_network:
     driver: bridge
@@ -21,7 +23,13 @@ services:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-    command: [ "postgres", "-c", "wal_level=logical", "-c", "max_wal_senders=${PG_MAX_WAL_SENDERS}", "-c", "max_replication_slots=${PG_MAX_REPLICATION_SLOTS}", "-c", "wal_keep_size=${PG_WAL_KEEP_SIZE}" ]
+    command: [ 
+     "postgres", 
+     "-c", "wal_level=logical", 
+     "-c", "max_wal_senders=${PG_MAX_WAL_SENDERS}", 
+     "-c", "max_replication_slots=${PG_MAX_REPLICATION_SLOTS}", 
+     "-c", "wal_keep_size=${PG_WAL_KEEP_SIZE}" 
+     ]
     ports:
       - "${DB_PORT}:5432"
     volumes:
@@ -46,13 +54,15 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
       ZOOKEEPER_TICK_TIME: ${ZOOKEEPER_TICK_TIME}
+      KAFKA_OPTS: "-Dzookeeper.4lw.commands.whitelist=ruok,srvr,stat"  # Bật lệnh ruok cho healthcheck
     volumes:
       - retailflow_zookeeper_data:/var/lib/zookeeper/data
       - retailflow_zookeeper_log:/var/lib/zookeeper/log
     networks:
       - retailflow_network
     healthcheck:
-      test: [ "CMD", "bash", "-c", "echo ruok | nc -w 2 localhost ${ZOOKEEPER_CLIENT_PORT} | grep imok" ]
+      # Dùng bash /dev/tcp thay vì nc vì image confluentinc không có nc (netcat)
+      test: [ "CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/${ZOOKEEPER_CLIENT_PORT}; echo ruok >&3; grep -q imok <&3" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,7 +83,7 @@ services:
       KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:${ZOOKEEPER_CLIENT_PORT}'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://${KAFKA_HOST}:${KAFKA_PORT}
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:${KAFKA_INTERNAL_PORT},PLAINTEXT_HOST://localhost:${KAFKA_PORT}
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR}
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_REBALANCE_DELAY}
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
@@ -82,9 +92,47 @@ services:
     networks:
       - retailflow_network
     healthcheck:
-      # Healthcheck chạy BÊN TRONG container → dùng localhost + KAFKA_INTERNAL_PORT (PLAINTEXT listener)
-      test: [ "CMD-SHELL", "kafka-topics --bootstrap-server localhost:${KAFKA_INTERNAL_PORT} --list || exit 1" ]
+      # Dùng cub kafka-ready thay vì kafka-topics vì cub nhẹ hơn (không khởi động JVM mới mỗi lần check)
+      test: [ "CMD", "bash", "-c", "cub kafka-ready -b localhost:${KAFKA_INTERNAL_PORT} 1 20" ]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+  # =========================================
+  # DEBEZIUM - CDC Tool
+  # =========================================
+  debezium:
+    image: ${DEBEZIUM_IMAGE}
+    container_name: retailflow_debezium
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "${DEBEZIUM_PORT}:${DEBEZIUM_CLIENT_PORT}"
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_SERVERS: kafka:${KAFKA_INTERNAL_PORT}
+      GROUP_ID: ${DEBEZIUM_GROUP_ID}
+      CONFIG_STORAGE_TOPIC: ${DEBEZIUM_CONFIG_TOPIC}
+      OFFSET_STORAGE_TOPIC: ${DEBEZIUM_OFFSET_TOPIC}
+      STATUS_STORAGE_TOPIC: ${DEBEZIUM_STATUS_TOPIC}
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: 'false'
+      VALUE_CONVERTER_SCHEMAS_ENABLE: 'false'
+      CONNECT_REST_ADVERTISED_HOST_NAME: debezium
+      CONFIG_STORAGE_REPLICATION_FACTOR: ${DEBEZIUM_REPLICATION_FACTOR}
+      OFFSET_STORAGE_REPLICATION_FACTOR: ${DEBEZIUM_REPLICATION_FACTOR}
+      STATUS_STORAGE_REPLICATION_FACTOR: ${DEBEZIUM_REPLICATION_FACTOR}
+    networks:
+      - retailflow_network
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "curl -sf http://localhost:${DEBEZIUM_CLIENT_PORT}/ || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s  # Debezium khởi động chậm hơn Kafka
+
+    
