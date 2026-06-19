@@ -13,6 +13,17 @@
     "topic.prefix": "retailflow_server",
     "table.include.list": "public.orders,public.users",
 
+    "topic.creation.enable": "true",
+    "topic.creation.default.partitions": "3",
+    "topic.creation.default.replication.factor": "1",
+    "topic.creation.default.cleanup.policy": "delete",
+    "topic.creation.default.retention.ms": "604800000",
+    "topic.creation.groups": "cdc",
+    "topic.creation.cdc.include": "retailflow_server\\.public\\..*",
+    "topic.creation.cdc.partitions": "6",
+    "topic.creation.cdc.replication.factor": "1",
+    "topic.creation.cdc.cleanup.policy": "delete",
+
     "slot.name": "retailflow_ecommerce_slot",
     "publication.name": "retailflow_ecommerce_pub",
 
