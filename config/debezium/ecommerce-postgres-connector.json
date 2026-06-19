@@ -1,0 +1,25 @@
+{
+  "name": "ecommerce-postgres-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    
+    "database.hostname": "retailflow_postgres",
+    "database.port": "5432",
+    "database.user": "${env:DB_USER}",
+    "database.password": "${env:DB_PASSWORD}",
+    "database.dbname": "${env:DB_NAME}",
+
+    "topic.prefix": "retailflow_server",
+    "table.include.list": "public.orders,public.users",
+
+    "slot.name": "retailflow_ecommerce_slot",
+    "publication.name": "retailflow_ecommerce_pub",
+
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "10000",
+    "decimal.handling.mode": "double",
+    "tombstones.on.delete": "true",
+    "tasks.max": "1"
+  }
+}

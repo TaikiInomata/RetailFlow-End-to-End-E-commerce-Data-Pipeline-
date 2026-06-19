@@ -17,6 +17,9 @@ volumes:
     driver: local
 
 services:
+  # =========================================
+  # POSTGRES - Source Database (OLTP)
+  # =========================================
   postgres:
     image: ${POSTGRES_IMAGE}
     container_name: retailflow_postgres
@@ -128,6 +131,11 @@ services:
       CONFIG_STORAGE_REPLICATION_FACTOR: ${DEBEZIUM_REPLICATION_FACTOR}
       OFFSET_STORAGE_REPLICATION_FACTOR: ${DEBEZIUM_REPLICATION_FACTOR}
       STATUS_STORAGE_REPLICATION_FACTOR: ${DEBEZIUM_REPLICATION_FACTOR}
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
     networks:
       - retailflow_network
     healthcheck:
@@ -135,7 +143,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 45s 
+      start_period: 45s
+  # =========================================
+  # MINIO - Object Storage (Data Lake)
+  # ========================================= 
   minio:
     image: ${MINIO_IMAGE}
     container_name: retailflow_minio
@@ -156,6 +167,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s 
-
-    
+      start_period: 15s
