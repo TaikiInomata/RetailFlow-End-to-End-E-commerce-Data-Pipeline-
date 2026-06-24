@@ -52,8 +52,8 @@ class MinioClientFactory:
 
     def ensure_bucket_exists(self, bucket_name: str) -> bool:
         """Kiểm tra và tạo bucket nếu chưa tồn tại."""
-        client = self.get_client()
         try:
+            client = self.get_client()
             client.head_bucket(Bucket=bucket_name)
             logger.info("[MinIO] Bucket '%s' đã tồn tại — bỏ qua bước tạo.", bucket_name)
             return True

@@ -3,11 +3,12 @@ import sys
 import logging
 import threading
 from boto3.s3.transfer import TransferConfig
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
-sys.path.append(PROJECT_ROOT)
+from pathlib import Path
 
 from scripts.utils.minio_client import MinioClientFactory
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+sys.path.append(str(PROJECT_ROOT))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 MB = 1024 ** 2
 
 BUCKET_NAME = 'bronze-zone'
-DATASET_DIR = os.path.join(PROJECT_ROOT, 'scripts/ingestion/batch/datasets')
+DATASET_DIR = PROJECT_ROOT / 'scripts/ingestion/batch/datasets'
 FILES_TO_UPLOAD = ['2019-09.csv', '2019-10.csv']
 
 transfer_config = TransferConfig(
