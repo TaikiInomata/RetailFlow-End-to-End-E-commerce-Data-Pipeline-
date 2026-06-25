@@ -70,13 +70,13 @@ def main():
 
     # 2. Xử lý từng file trong danh sách
     for file_name in FILES_TO_UPLOAD:
-        local_file_path = os.path.join(DATASET_DIR, file_name)
-        if not os.path.exists(local_file_path):
+        local_file_path = DATASET_DIR / file_name
+        if not local_file_path.exists():
             logger.warning("[BatchJob] Bỏ qua — file không tồn tại: %s", local_file_path)
             failed_files.append({"file": file_name, "error": "File không tồn tại trên ổ cứng"})
             continue
         
-        name_without_ext = os.path.splitext(file_name)[0]
+        name_without_ext = file_name.stem
         parts = name_without_ext.split("-")
         if len(parts) == 2:
             year = parts[0]   
