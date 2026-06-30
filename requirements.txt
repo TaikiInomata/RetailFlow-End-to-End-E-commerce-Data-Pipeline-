@@ -1,4 +1,6 @@
 # Python dependencies.
 
-boto3==1.34.0
-python-dotenv==1.0.1
+boto3>=1.43.0
+python-dotenv>=1.0.1
+psycopg2-binary>=2.9.9
+Faker>=40.0.0

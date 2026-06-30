@@ -31,6 +31,11 @@
     "heartbeat.interval.ms": "10000",
     "decimal.handling.mode": "double",
     "tombstones.on.delete": "true",
-    "tasks.max": "1"
+    "tasks.max": "1",
+
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false"
   }
 }

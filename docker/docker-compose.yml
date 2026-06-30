@@ -107,7 +107,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: retailflow_kafka_ui
     ports:
-      - "8080:8080"
+      - "${KAFKA_UI_PORT}:8080"
     restart: unless-stopped
     depends_on:
       kafka:
@@ -125,7 +125,9 @@ services:
   # DEBEZIUM - CDC Tool
   # =========================================
   debezium:
-    image: ${DEBEZIUM_IMAGE}
+    build:
+      context: .                    # Build context là thư mục docker/
+      dockerfile: debezium/Dockerfile  # Custom image: Debezium + Confluent S3 Sink
     container_name: retailflow_debezium
     depends_on:
       postgres:
@@ -154,6 +156,9 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
+      # Cần thiết để S3 Sink Connector resolve ${env:MINIO_ROOT_USER} và ${env:MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       CONNECT_TOPIC_CREATION_ENABLE: 'true'
     networks:
       - retailflow_network
