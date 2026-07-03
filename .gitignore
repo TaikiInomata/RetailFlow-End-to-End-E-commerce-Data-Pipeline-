@@ -234,3 +234,6 @@ data/*
 
 *.zip
 *.csv
+# Hadoop Windows Binaries and Temp
+hadoop/
+

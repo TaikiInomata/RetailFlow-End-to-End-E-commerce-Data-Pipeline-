@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 # pyrefly: ignore [missing-import]
 from confluent_kafka import Producer
 # pyrefly: ignore [missing-import]
+from confluent_kafka.admin import AdminClient, NewTopic
+# pyrefly: ignore [missing-import]
 from faker import Faker
 
 load_dotenv(Path(__file__).parent.parent.parent / '.env')
@@ -228,6 +230,26 @@ def connect_db():
 
 def run_bot():
     """Khởi chạy Clickstream Bot — bơm events vào Kafka liên tục."""
+    # ── Đảm bảo Topic Tồn Tại (Auto-Create) ──────────────────────────────────
+    admin_client = AdminClient({"bootstrap.servers": KAFKA_BROKER})
+    topic_metadata = admin_client.list_topics(timeout=10)
+    
+    if TOPIC_NAME not in topic_metadata.topics:
+        logger.info("[Bot] Topic '%s' chưa tồn tại. Đang tạo mới...", TOPIC_NAME)
+        # Tạo topic với 3 partitions, replication factor = 1 (do đang chạy 1 broker)
+        new_topic = NewTopic(TOPIC_NAME, num_partitions=3, replication_factor=1)
+        fs = admin_client.create_topics([new_topic])
+        # Chờ quá trình tạo hoàn tất
+        for topic, f in fs.items():
+            try:
+                f.result()  # Sẽ throw exception nếu fail
+                logger.info("[Bot] Đã tạo thành công topic '%s'.", topic)
+            except Exception as e:
+                logger.error("[Bot] Lỗi khi tạo topic '%s': %s", topic, e)
+                sys.exit(1)
+    else:
+        logger.info("[Bot] Topic '%s' đã tồn tại. Sẵn sàng gửi data.", TOPIC_NAME)
+
     # ── Kafka Producer ───────────────────────────────────────────────────────
     conf = {
         "bootstrap.servers" : KAFKA_BROKER,
