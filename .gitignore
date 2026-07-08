@@ -237,3 +237,7 @@ data/*
 # Hadoop Windows Binaries and Temp
 hadoop/
 
+
+# Docker environment overrides (ch?a networking config, không c?n push lên repo)
+.env.docker
+

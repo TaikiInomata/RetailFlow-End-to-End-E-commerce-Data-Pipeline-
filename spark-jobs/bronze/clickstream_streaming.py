@@ -16,7 +16,9 @@ from pyspark.sql.functions import col, from_json, to_timestamp, date_format
 load_dotenv(Path(__file__).parent.parent.parent / '.env')
 
 # Fix lỗi Spark trên Windows: HADOOP_HOME and hadoop.home.dir are unset
-os.environ["HADOOP_HOME"] = str(Path(__file__).parent.parent.parent / "hadoop")
+# Bỏ qua khi chạy trong Docker (Linux — winutils.exe không cần thiết)
+if not os.getenv("RUNNING_IN_DOCKER"):
+    os.environ["HADOOP_HOME"] = str(Path(__file__).parent.parent.parent / "hadoop")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 logger = logging.getLogger(__name__)

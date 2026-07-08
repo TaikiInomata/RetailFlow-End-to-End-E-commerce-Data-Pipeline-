@@ -36,6 +36,10 @@ KAFKA_BROKER    = os.getenv("KAFKA_BROKER", "localhost:9092")
 TOPIC_NAME      = os.getenv("CLICKSTREAM_TOPIC", "retailflow_clickstream")
 USER_POOL_SIZE  = int(os.getenv("CLICKSTREAM_USER_POOL_SIZE", "1000"))
 SESSION_TIMEOUT = 1800   # 30 phút — session hết hạn nếu không hoạt động
+# Disk Protection: giới hạn số events và thời gian chạy
+# 0 = không giới hạn (chạy vô tận — chỉ dùng khi dev local, không nên dùng trong Docker)
+MAX_EVENTS      = int(os.getenv("CLICKSTREAM_MAX_EVENTS", "0"))
+MAX_HOURS       = float(os.getenv("SIMULATION_MAX_HOURS", "0"))
 
 fake = Faker()
 
@@ -280,7 +284,11 @@ def run_bot():
 
     logger.info("[Bot] === Bắt đầu bơm Clickstream vào topic '%s' (broker: %s) ===",
                 TOPIC_NAME, KAFKA_BROKER)
-    logger.info("[Bot] Session timeout: %ds | Nhấn Ctrl+C để dừng.", SESSION_TIMEOUT)
+    logger.info("[Bot] Session timeout: %ds | MAX_EVENTS: %s | MAX_HOURS: %s",
+                SESSION_TIMEOUT,
+                MAX_EVENTS if MAX_EVENTS > 0 else "unlimited",
+                f"{MAX_HOURS}h" if MAX_HOURS > 0 else "unlimited")
+    started_at = time.time()
 
     msg_count = 0
     try:
@@ -326,6 +334,16 @@ def run_bot():
             if msg_count % 500 == 0:
                 logger.info("[Bot] Đã bơm %d events | Sessions active: %d",
                             msg_count, session_mgr.active_count())
+
+            # Disk Protection: dừng khi đạt giới hạn số events
+            if MAX_EVENTS > 0 and msg_count >= MAX_EVENTS:
+                logger.info("[Bot] Đã đạt MAX_EVENTS=%d. Dừng lại.", MAX_EVENTS)
+                break
+
+            # Disk Protection: dừng khi vượt quá thời gian cho phép
+            if MAX_HOURS > 0 and (time.time() - started_at) >= MAX_HOURS * 3600:
+                logger.info("[Bot] Đã đạt MAX_HOURS=%.1fh. Dừng lại.", MAX_HOURS)
+                break
 
             time.sleep(random.uniform(0.01, 0.1))
 

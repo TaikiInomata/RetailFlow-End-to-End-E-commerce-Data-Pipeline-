@@ -1,0 +1,7 @@
+boto3>=1.43.0
+python-dotenv>=1.0.1
+psycopg2-binary>=2.9.9
+Faker>=40.0.0
+confluent-kafka>=2.3.0
+pandas>=2.0.0
+requests>=2.32.0

@@ -92,6 +92,13 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR}
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: ${KAFKA_REBALANCE_DELAY}
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      # --- Disk Protection: Kafka Retention ---
+      # Xóa messages cũ hơn 48 giờ để tránh tích lũy vô hạn
+      KAFKA_LOG_RETENTION_HOURS: 48
+      # Giới hạn tổng dung lượng mỗi topic-partition tối đa 200MB
+      KAFKA_LOG_RETENTION_BYTES: 209715200
+      # Kích thước mỗi segment file (10MB) — giúp việc xóa file cũ granular hơn
+      KAFKA_LOG_SEGMENT_BYTES: 10485760
     volumes:
       - retailflow_kafka_data:/var/lib/kafka/data
     networks:
@@ -192,3 +199,51 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+  # =========================================
+  # SPARK STREAMING — Bronze Layer (Always-On)
+  # Đọc Clickstream từ Kafka → ghi Parquet xuống MinIO liên tục
+  # =========================================
+  spark-streaming:
+    build:
+      context: ..                              # Build context: project root (để COPY hoạt động đúng)
+      dockerfile: docker/spark/Dockerfile
+    container_name: retailflow_spark_streaming
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - ../.env                                # Credentials (passwords, keys)
+      - ../.env.docker                         # Docker networking overrides (KAFKA_BROKER, MINIO_ENDPOINT...)
+    environment:
+      RUNNING_IN_DOCKER: "true"                # Bỏ qua HADOOP_HOME workaround cho Windows
+    networks:
+      - retailflow_network
+  # =========================================
+  # SIMULATION — On-Demand (Chạy thủ công khi muốn giả lập)
+  # Khởi động: docker compose --profile simulation up simulation -d
+  # Dừng:      docker compose stop simulation
+  # =========================================
+  simulation:
+    build:
+      context: ..
+      dockerfile: docker/simulation/Dockerfile
+    container_name: retailflow_simulation
+    profiles:
+      - simulation                             # KHÔNG tự khởi động khi docker compose up -d
+    restart: "no"                              # Tắt auto-restart — chạy xong là dừng
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ../.env
+      - ../.env.docker
+    environment:
+      CLICKSTREAM_MAX_EVENTS: "100000"         # Tự dừng sau 100k events (~50MB Parquet)
+      SIMULATION_MAX_HOURS: "4"                 # Tự dừng sau 4 giờ dù chưa đạt max events
+    networks:
+      - retailflow_network

@@ -14,8 +14,8 @@
     "aws.access.key.id": "${env:MINIO_ROOT_USER}",
     "aws.secret.access.key": "${env:MINIO_ROOT_PASSWORD}",
     
-    "flush.size": "1000",
-    "rotate.schedule.interval.ms": "300000",
+    "flush.size": "100",
+    "rotate.schedule.interval.ms": "60000",
     
     "storage.class": "io.confluent.connect.s3.storage.S3Storage",
     "format.class": "io.confluent.connect.s3.format.json.JsonFormat",
