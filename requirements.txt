@@ -5,3 +5,4 @@ Faker>=40.0.0
 confluent-kafka>=2.3.0
 pandas>=2.0.0
 pyspark>=4.0.0
+requests>=2.32.0
