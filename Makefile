@@ -25,7 +25,7 @@ help:
 	@echo "  make register-cdc Register Debezium CDC connector"
 	@echo ""
 
-setup: seed batch fetch-rates register-cdc setup-lifecycle
+setup: batch seed fetch-rates register-cdc setup-lifecycle
 	@echo ""
 	@echo "✅ RetailFlow setup hoàn tất!"
 	@echo "   MinIO UI   : http://localhost:9001"

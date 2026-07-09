@@ -1,12 +1,12 @@
 # ============================================================
-# setup.ps1 — RetailFlow One-Time Setup (Windows PowerShell)
+# setup.ps1 - RetailFlow One-Time Setup (Windows PowerShell)
 # ============================================================
-# Chạy một lần sau khi pull project về để khởi tạo dữ liệu.
-# Yêu cầu: Docker đang chạy (docker compose up -d đã được thực hiện)
+# Run once after cloning the project to initialize data.
+# Requirement: Docker must be running (docker compose up -d)
 #
-# Cách dùng:
-#   .\setup.ps1             — Chạy toàn bộ 4 bước
-#   .\setup.ps1 -Step seed  — Chỉ chạy bước seed
+# Usage:
+#   .\setup.ps1             - Run all 4 steps
+#   .\setup.ps1 -Step seed  - Run only the seed step
 # ============================================================
 param(
     [ValidateSet("all", "seed", "batch", "fetch-rates", "register-cdc")]
@@ -36,37 +36,37 @@ function Invoke-Step {
     try {
         & $Action
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            Write-Fail "❌ Thất bại tại: $Name (exit code $LASTEXITCODE)"
+            Write-Fail "X Failed at: $Name (exit code $LASTEXITCODE)"
             exit $LASTEXITCODE
         }
-        Write-Success "✅ Hoàn thành: $Name"
+        Write-Success "v Completed: $Name"
     }
     catch {
-        Write-Fail "❌ Lỗi tại $Name : $_"
+        Write-Fail "X Error at $Name : $_"
         exit 1
     }
 }
 
-# ── Các bước setup ──────────────────────────────────────────
+# ── Steps ──────────────────────────────────────────
 
 $steps = @{
-    "seed" = {
-        Invoke-Step "=== [1/4] Seeding Product Catalog vào PostgreSQL ===" {
+    "seed"            = {
+        Invoke-Step "=== [1/4] Seeding Product Catalog into PostgreSQL ===" {
             python scripts/seeds/seed_product_catalog.py
         }
     }
-    "batch" = {
-        Invoke-Step "=== [2/4] Batch Ingestion CSV → MinIO ===" {
+    "batch"           = {
+        Invoke-Step "=== [2/4] Batch Ingestion CSV -> MinIO ===" {
             python scripts/ingestion/batch/batch_ingestion_job.py
         }
     }
-    "fetch-rates" = {
+    "fetch-rates"     = {
         Invoke-Step "=== [3/4] Fetching Exchange Rates ===" {
             python scripts/ingestion/fetch/fetch_exchange_rates.py
         }
     }
-    "register-cdc" = {
-        Invoke-Step "=== [4/5] Đăng ký Debezium CDC Connector ===" {
+    "register-cdc"    = {
+        Invoke-Step "=== [4/5] Registering Debezium CDC Connector ===" {
             $body = Get-Content -Raw "config/debezium/ecommerce-postgres-connector.json"
             $response = Invoke-RestMethod `
                 -Method Post `
@@ -77,37 +77,38 @@ $steps = @{
         }
     }
     "setup-lifecycle" = {
-        Invoke-Step "=== [5/5] Thiết lập MinIO Lifecycle Policy (bảo vệ ổ đĩa) ===" {
+        Invoke-Step "=== [5/5] Setup MinIO Lifecycle Policy ===" {
             python scripts/utils/setup_minio_lifecycle.py
         }
     }
 }
 
-# ── Thực thi ────────────────────────────────────────────────
+# ── Execution ────────────────────────────────────────────────
 
 Write-Host "============================================" -ForegroundColor Yellow
-Write-Host "   RetailFlow — One-Time Project Setup      " -ForegroundColor Yellow
+Write-Host "   RetailFlow - One-Time Project Setup      " -ForegroundColor Yellow
 Write-Host "============================================" -ForegroundColor Yellow
-Write-Host "Yêu cầu: Docker đang chạy (docker compose up -d)"
+Write-Host "Requirement: Docker is running (docker compose up -d)"
 Write-Host "Step: $Step`n"
 
 if ($Step -eq "all") {
-    & $steps["seed"]
     & $steps["batch"]
+    & $steps["seed"]
     & $steps["fetch-rates"]
     & $steps["register-cdc"]
     & $steps["setup-lifecycle"]
-} else {
+}
+else {
     & $steps[$Step]
 }
 
 Write-Host "`n============================================" -ForegroundColor Green
-Write-Host "   ✅ Setup Hoàn Tất!                        " -ForegroundColor Green
+Write-Host "   v Setup Completed!                        " -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
 Write-Host "   MinIO UI   : http://localhost:9001"
 Write-Host "   Kafka UI   : http://localhost:8080"
 Write-Host "   Debezium   : http://localhost:8083"
 Write-Host ""
-Write-Host "Để bật Simulation (giả lập hành vi người dùng):"
+Write-Host "To enable User Simulation:"
 Write-Host "   docker compose -f docker/docker-compose.yml --profile simulation up simulation -d" -ForegroundColor White
 Write-Host ""
