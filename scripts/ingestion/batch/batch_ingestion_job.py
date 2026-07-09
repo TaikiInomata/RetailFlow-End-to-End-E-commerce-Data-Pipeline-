@@ -1,14 +1,40 @@
+"""
+batch_ingestion_job.py
+======================
+Upload dữ liệu CSV lịch sử từ Kaggle lên MinIO Bronze Zone.
+
+Luồng thực thi:
+  1. download_dataset_if_needed() — Tải CSV từ Kaggle nếu chưa có
+       a. Files đã tồn tại trong datasets/    → bỏ qua, tiết kiệm thời gian
+       b. ZIP cục bộ tìm thấy ở project root  → giải nén ngay, không cần internet
+       c. Cả hai đều không có                 → tải trực tiếp từ Kaggle API
+  2. Upload từng CSV lên MinIO với multipart transfer + progress bar
+  3. In báo cáo tổng kết (Audit Report)
+
+Dataset Kaggle:
+  mkechinov/ecommerce-behavior-data-from-multi-category-store
+  https://www.kaggle.com/datasets/mkechinov/ecommerce-behavior-data-from-multi-category-store
+
+Cấu hình trong .env:
+  KAGGLE_USERNAME  — Kaggle username (tạo tại https://www.kaggle.com/settings/account)
+  KAGGLE_KEY       — Kaggle API key  (tạo tại https://www.kaggle.com/settings/account)
+"""
 import os
 import sys
+import zipfile
 import logging
 import threading
-from boto3.s3.transfer import TransferConfig
 from pathlib import Path
+from boto3.s3.transfer import TransferConfig
+from dotenv import load_dotenv
 
-from scripts.utils.minio_client import MinioClientFactory
-
+# --- SETUP PATH ---
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "utils"))
+load_dotenv(PROJECT_ROOT / '.env')
+
+# pyrefly: ignore [missing-import]
+from minio_client import MinioClientFactory  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,102 +43,265 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-MB = 1024 ** 2
+# --- CẤU HÌNH ---
+MB            = 1024 ** 2
+BUCKET_NAME   = 'bronze-zone'
+DATASET_DIR   = PROJECT_ROOT / 'scripts' / 'ingestion' / 'batch' / 'datasets'
+KAGGLE_DATASET = "mkechinov/ecommerce-behavior-data-from-multi-category-store"
 
-BUCKET_NAME = 'bronze-zone'
-DATASET_DIR = PROJECT_ROOT / 'scripts/ingestion/batch/datasets'
-FILES_TO_UPLOAD = ['2019-09.csv', '2019-10.csv']
+# Ánh xạ tên tháng tiếng Anh sang số để tạo Hive partition chuẩn
+MONTH_NAME_MAP = {
+    "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
+    "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
+    "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+}
 
 transfer_config = TransferConfig(
     multipart_threshold=100 * MB,
-    multipart_chunksize=50 * MB,
+    multipart_chunksize=50  * MB,
     max_concurrency=10,
     use_threads=True
 )
 
+
+# ── Progress Bar ─────────────────────────────────────────────────────────────
 class ProgressPercentage:
     def __init__(self, filename):
-        self._filename = os.path.basename(filename)
-        self._size = float(os.path.getsize(filename))
-        self._seen_so_far = 0
-        self._lock = threading.Lock()
+        self._filename     = os.path.basename(filename)
+        self._size         = float(os.path.getsize(filename))
+        self._seen_so_far  = 0
+        self._lock         = threading.Lock()
 
     def __call__(self, bytes_amount):
-        # Bắt buộc xếp hàng để cập nhật tiến trình (Thread-safe)
         with self._lock:
             self._seen_so_far += bytes_amount
             percentage = (self._seen_so_far / self._size) * 100
-            # \r giúp xóa dòng cũ, in dòng mới đè lên để tạo thanh tiến trình mượt mà
             sys.stdout.write(
-                f"\r⏳ [Ingesting] {self._filename}: {self._seen_so_far / MB:.2f} MB / {self._size / MB:.2f} MB ({percentage:.2f}%)"
+                f"\r⏳ [Ingesting] {self._filename}: "
+                f"{self._seen_so_far / MB:.2f} MB / {self._size / MB:.2f} MB "
+                f"({percentage:.2f}%)"
             )
             sys.stdout.flush()
+
+
+# ── Download from Kaggle ──────────────────────────────────────────────────────
+def _extract_zip(zip_path: Path, target_dir: Path) -> list[str]:
+    """
+    Giải nén TẤT CẢ file CSV từ ZIP vào target_dir.
+    Trả về danh sách tên file đã giải nén.
+    """
+    target_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("[BatchJob] Giải nén: %s → %s", zip_path.name, target_dir)
+    extracted = []
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        # Lấy tất cả file .csv trong ZIP (bất kể tên gì)
+        csv_members = [m for m in zf.namelist() if m.lower().endswith('.csv')]
+        if not csv_members:
+            logger.warning("[BatchJob] Không tìm thấy file .csv nào trong ZIP.")
+            return extracted
+        logger.info("[BatchJob] Tìm thấy %d file CSV trong ZIP.", len(csv_members))
+        for member in csv_members:
+            # Flatten: bỏ đường dẫn thư mục trong ZIP, chỉ lấy tên file
+            out_path = target_dir / Path(member).name
+            if out_path.exists():
+                logger.info("[BatchJob]   Đã tồn tại, bỏ qua: %s", out_path.name)
+                extracted.append(out_path.name)
+                continue
+            with zf.open(member) as src, open(out_path, 'wb') as dst:
+                dst.write(src.read())
+            logger.info("[BatchJob]   Giải nén thành công: %s (%.1f MB)",
+                        out_path.name, out_path.stat().st_size / MB)
+            extracted.append(out_path.name)
+    return extracted
+
+
+def _download_via_kaggle_api(target_dir: Path) -> bool:
+    """
+    Tải toàn bộ dataset ZIP từ Kaggle API rồi giải nén tất cả CSV.
+    Trả về True nếu thành công.
+    """
+    kaggle_user = os.getenv("KAGGLE_USERNAME")
+    kaggle_key  = os.getenv("KAGGLE_KEY")
+
+    if not kaggle_user or not kaggle_key:
+        logger.error("[BatchJob] Thiếu biến môi trường KAGGLE_USERNAME hoặc KAGGLE_KEY.")
+        logger.error("[BatchJob] Tạo API key tại: https://www.kaggle.com/settings/account")
+        logger.error("[BatchJob] Sau đó thêm vào file .env:")
+        logger.error("[BatchJob]   KAGGLE_USERNAME=your_username")
+        logger.error("[BatchJob]   KAGGLE_KEY=your_api_key")
+        return False
+
+    try:
+        import kaggle  # noqa: F401
+    except ImportError:
+        logger.error("[BatchJob] Thiếu package 'kaggle'. Chạy: pip install kaggle")
+        return False
+
+    os.environ["KAGGLE_USERNAME"] = kaggle_user
+    os.environ["KAGGLE_KEY"]      = kaggle_key
+
+    import kaggle as kg
+    kg.api.authenticate()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Tải toàn bộ dataset dưới dạng ZIP (bao gồm tất cả CSV)
+    logger.info("[BatchJob] Đang tải toàn bộ dataset từ Kaggle: %s", KAGGLE_DATASET)
+    try:
+        kg.api.dataset_download_files(
+            dataset=KAGGLE_DATASET,
+            path=str(target_dir),
+            unzip=True,      # Tự giải nén sau khi tải
+            force=False,
+            quiet=False,
+        )
+        logger.info("[BatchJob] Tải và giải nén từ Kaggle hoàn tất.")
+        return True
+    except Exception as e:
+        logger.error("[BatchJob] Lỗi khi tải dataset từ Kaggle: %s", e)
+        return False
+
+
+def discover_csv_files() -> list[Path]:
+    """Quét DATASET_DIR và trả về danh sách tất cả file .csv tìm được."""
+    return sorted(DATASET_DIR.glob('*.csv'))
+
+
+def download_dataset_if_needed() -> bool:
+    """
+    Đảm bảo có ít nhất 1 CSV file trong DATASET_DIR trước khi upload.
+
+    Thứ tự ưu tiên:
+      1. Đã có CSV trong datasets/     → skip (idempotent, nhanh nhất)
+      2. ZIP cục bộ ở project root     → extract tất cả CSV (không cần internet)
+      3. Tải trực tiếp từ Kaggle API  → download + extract (cần KAGGLE_USERNAME + KAGGLE_KEY)
+    """
+    # Case 1: Đã có ít nhất 1 CSV file
+    existing_csvs = discover_csv_files()
+    if existing_csvs:
+        logger.info("[BatchJob] ✅ Tìm thấy %d CSV file trong %s — bỏ qua download.",
+                    len(existing_csvs), DATASET_DIR)
+        for f in existing_csvs:
+            logger.info("[BatchJob]   • %s (%.1f GB)", f.name, f.stat().st_size / (1024 ** 3))
+        return True
+
+    # Case 2: ZIP cục bộ tồn tại ở project root
+    local_zip = PROJECT_ROOT / "ecommerce-behavior-data-from-multi-category-store.zip"
+    if local_zip.exists():
+        logger.info("[BatchJob] Tìm thấy ZIP cục bộ: %s (%.1f GB) — đang giải nén TẤT CẢ CSV...",
+                    local_zip.name, local_zip.stat().st_size / (1024 ** 3))
+        extracted = _extract_zip(local_zip, DATASET_DIR)
+        if extracted:
+            logger.info("[BatchJob] Giải nén thành công %d file CSV.", len(extracted))
+            return True
+        logger.warning("[BatchJob] ZIP không chứa CSV nào. Thử tải từ Kaggle...")
+
+    # Case 3: Tải từ Kaggle API
+    logger.info("[BatchJob] Bắt đầu tải dataset từ Kaggle: %s", KAGGLE_DATASET)
+    return _download_via_kaggle_api(DATASET_DIR)
+
+
+# ── Upload to MinIO ───────────────────────────────────────────────────────────
+def _parse_partition(file_name: str) -> tuple[str, str] | None:
+    """
+    Trích xuất (year, month_number) từ tên file.
+    Hỗ trợ cả 2 định dạng:
+      '2019-Oct.csv' → ('2019', '10')
+      '2019-09.csv'  → ('2019', '09')
+    Trả về None nếu không parse được.
+    """
+    stem  = Path(file_name).stem  # '2019-Oct' hoặc '2019-09'
+    parts = stem.split("-")
+    if len(parts) != 2:
+        return None
+
+    year, month_raw = parts
+    # Tháng tên tiếng Anh (Oct, Nov, ...) → số
+    month_num = MONTH_NAME_MAP.get(month_raw, None)
+    # Tháng dạng số (09, 10, ...) → giữ nguyên
+    if month_num is None and month_raw.isdigit():
+        month_num = month_raw.zfill(2)
+
+    return (year, month_num) if month_num else None
+
 
 def main():
     logger.info("[BatchJob] === Khởi động Batch Ingestion Job ===")
 
-    # 1. Khởi tạo kết nối qua Factory
+    # 1. Đảm bảo CSV files có sẵn (download nếu cần)
+    if not download_dataset_if_needed():
+        logger.critical("[BatchJob] Dừng Job: Không thể tải dataset. Xem hướng dẫn ở trên.")
+        sys.exit(1)
+
+    # 2. Khởi tạo kết nối MinIO
     factory = MinioClientFactory()
     if not factory.verify_connection():
         logger.critical("[BatchJob] Dừng Job: Không thể kết nối tới MinIO Data Lake.")
         sys.exit(1)
-        
-    minio_client = factory.get_client()
 
+    minio_client = factory.get_client()
     if not factory.ensure_bucket_exists(BUCKET_NAME):
         logger.critical("[BatchJob] Dừng Job: Không thể tạo hoặc truy cập bucket '%s'.", BUCKET_NAME)
         sys.exit(1)
 
-    # Sử dụng mảng để theo dõi vết (Audit Trail)
-    success_files = []
-    failed_files = []
+    # 3. Khám phá tất cả CSV files hiện có trong DATASET_DIR
+    csv_files = discover_csv_files()
+    if not csv_files:
+        logger.critical("[BatchJob] Không tìm thấy file CSV nào trong %s sau bước download.", DATASET_DIR)
+        sys.exit(1)
+
+    logger.info("[BatchJob] Sẽ upload %d CSV file(s):", len(csv_files))
+    for f in csv_files:
+        logger.info("[BatchJob]   • %s (%.2f GB)", f.name, f.stat().st_size / (1024 ** 3))
+
+    # Audit Trail
+    success_files       = []
+    failed_files        = []
     unpartitioned_files = []
 
-    # 2. Xử lý từng file trong danh sách
-    for file_name in FILES_TO_UPLOAD:
-        local_file_path = DATASET_DIR / file_name
-        if not local_file_path.exists():
-            logger.warning("[BatchJob] Bỏ qua — file không tồn tại: %s", local_file_path)
-            failed_files.append({"file": file_name, "error": "File không tồn tại trên ổ cứng"})
-            continue
-        
-        name_without_ext = file_name.stem
-        parts = name_without_ext.split("-")
-        if len(parts) == 2:
-            year = parts[0]   
-            month = parts[1]  
-            minio_object_path = f"batch_ecommerce/year={year}/month={month}/{file_name}"
+    # 4. Upload từng file lên MinIO
+    for local_file_path in csv_files:
+        file_name = local_file_path.name
+
+        # Xác định đường dẫn partition trên MinIO
+        partition = _parse_partition(file_name)
+        if partition:
+            year, month_num = partition
+            minio_object_path = f"batch_ecommerce/year={year}/month={month_num}/{file_name}"
         else:
             minio_object_path = f"batch_ecommerce/unpartitioned/{file_name}"
             unpartitioned_files.append(file_name)
-            logger.warning("[BatchJob] Không xác định được partition từ tên file '%s' — chuyển vào unpartitioned/.", file_name)
-        
-        logger.info("[BatchJob] Bắt đầu xử lý: %s → s3://%s/%s", file_name, BUCKET_NAME, minio_object_path)
-        
+            logger.warning("[BatchJob] Không parse được partition từ '%s' — chuyển vào unpartitioned/.", file_name)
+
+        logger.info("[BatchJob] Bắt đầu xử lý: %s → s3://%s/%s",
+                    file_name, BUCKET_NAME, minio_object_path)
+
         try:
             minio_client.upload_file(
-                Filename=local_file_path, 
-                Bucket=BUCKET_NAME, 
+                Filename=str(local_file_path),
+                Bucket=BUCKET_NAME,
                 Key=minio_object_path,
                 Config=transfer_config,
-                Callback=ProgressPercentage(local_file_path)
+                Callback=ProgressPercentage(local_file_path),
             )
+            print()  # Xuống dòng sau progress bar
             success_files.append(file_name)
-            logger.info("[BatchJob] Upload thành công: s3://%s/%s", BUCKET_NAME, minio_object_path)
+            logger.info("[BatchJob] ✅ Upload thành công: s3://%s/%s", BUCKET_NAME, minio_object_path)
         except Exception as e:
+            print()
             logger.error("[BatchJob] Upload thất bại cho file '%s': %s", file_name, e)
             failed_files.append({"file": file_name, "error": str(e)})
-    
-    # --- PHẦN TỔNG KẾT BÁO CÁO (AUDIT REPORT) ---
+
+    # 5. Báo cáo tổng kết (Audit Report)
+    total = len(csv_files)
     logger.info("[BatchJob] === BÁO CÁO TỔNG KẾT INGESTION ===")
 
     if unpartitioned_files:
-        logger.warning("[BatchJob] %d/%d file không xác định được partition, đã chuyển vào unpartitioned/:",
-                       len(unpartitioned_files), len(FILES_TO_UPLOAD))
-        for file in unpartitioned_files:
-            logger.warning("[BatchJob]   - %s", file)
+        logger.warning("[BatchJob] %d/%d file không xác định được partition:",
+                       len(unpartitioned_files), total)
+        for f in unpartitioned_files:
+            logger.warning("[BatchJob]   - %s", f)
 
-    logger.info("[BatchJob] Upload thành công : %d/%d file.", len(success_files), len(FILES_TO_UPLOAD))
+    logger.info("[BatchJob] Upload thành công : %d/%d file.", len(success_files), total)
     for f in success_files:
         logger.info("[BatchJob]   + %s", f)
 
@@ -120,10 +309,11 @@ def main():
         logger.error("[BatchJob] Upload thất bại   : %d file.", len(failed_files))
         for item in failed_files:
             logger.error("[BatchJob]   - %s | Lý do: %s", item['file'], item['error'])
-        logger.critical("[BatchJob] KẾt luận: JOB THẤT BẠI MỘT PHẦN. Kiểm tra lại các file lỗi bên trên.")
+        logger.critical("[BatchJob] KẾT LUẬN: JOB THẤT BẠI MỘT PHẦN.")
         sys.exit(1)
     else:
-        logger.info("[BatchJob] KẾt luận: JOB HOÀN THÀNH — tất cả %d file đã được nạp thành công.", len(success_files))
+        logger.info("[BatchJob] KẾT LUẬN: JOB HOÀN THÀNH — %d/%d file nạp thành công.",
+                    len(success_files), total)
         sys.exit(0)
 
 
