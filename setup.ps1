@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # setup.ps1 - RetailFlow One-Time Setup (Windows PowerShell)
 # ============================================================
 # Run once after cloning the project to initialize data.
@@ -49,20 +49,23 @@ function Invoke-Step {
 
 # ── Steps ──────────────────────────────────────────
 
+# Auto-detect Python in virtual environment (venv) if it exists
+$PYTHON = if (Test-Path ".\venv\Scripts\python.exe") { ".\venv\Scripts\python.exe" } else { "python" }
+
 $steps = @{
     "seed"            = {
-        Invoke-Step "=== [1/4] Seeding Product Catalog into PostgreSQL ===" {
-            python scripts/seeds/seed_product_catalog.py
+        Invoke-Step "=== [2/4] Seeding Product Catalog into PostgreSQL ===" {
+            & $PYTHON scripts/seeds/seed_product_catalog.py
         }
     }
     "batch"           = {
-        Invoke-Step "=== [2/4] Batch Ingestion CSV -> MinIO ===" {
-            python scripts/ingestion/batch/batch_ingestion_job.py
+        Invoke-Step "=== [1/4] Batch Ingestion CSV -> MinIO ===" {
+            & $PYTHON scripts/ingestion/batch/batch_ingestion_job.py
         }
     }
     "fetch-rates"     = {
         Invoke-Step "=== [3/4] Fetching Exchange Rates ===" {
-            python scripts/ingestion/fetch/fetch_exchange_rates.py
+            & $PYTHON scripts/ingestion/fetch/fetch_exchange_rates.py
         }
     }
     "register-cdc"    = {
@@ -78,7 +81,7 @@ $steps = @{
     }
     "setup-lifecycle" = {
         Invoke-Step "=== [5/5] Setup MinIO Lifecycle Policy ===" {
-            python scripts/utils/setup_minio_lifecycle.py
+            & $PYTHON scripts/utils/setup_minio_lifecycle.py
         }
     }
 }

@@ -12,8 +12,9 @@
 #   make register-cdc — Chỉ đăng ký Debezium connector
 # ============================================================
 
-.PHONY: setup seed batch fetch-rates register-cdc setup-lifecycle help
+PYTHON := $(shell if [ -f ./venv/bin/python ]; then echo ./venv/bin/python; elif [ -f ./venv/Scripts/python.exe ]; then echo ./venv/Scripts/python.exe; else echo python; fi)
 
+.PHONY: setup seed batch fetch-rates register-cdc setup-lifecycle help
 # Mặc định: hiện danh sách lệnh
 help:
 	@echo ""
@@ -34,16 +35,16 @@ setup: batch seed fetch-rates register-cdc setup-lifecycle
 	@echo ""
 
 seed:
-	@echo "=== [1/4] Seeding Product Catalog vào PostgreSQL ==="
-	python scripts/seeds/seed_product_catalog.py
+	@echo "=== [2/4] Seeding Product Catalog vào PostgreSQL ==="
+	$(PYTHON) scripts/seeds/seed_product_catalog.py
 
 batch:
-	@echo "=== [2/4] Batch Ingestion CSV → MinIO ==="
-	python scripts/ingestion/batch/batch_ingestion_job.py
+	@echo "=== [1/4] Batch Ingestion CSV → MinIO ==="
+	$(PYTHON) scripts/ingestion/batch/batch_ingestion_job.py
 
 fetch-rates:
 	@echo "=== [3/4] Fetching Exchange Rates ==="
-	python scripts/ingestion/fetch/fetch_exchange_rates.py
+	$(PYTHON) scripts/ingestion/fetch/fetch_exchange_rates.py
 
 register-cdc:
 	@echo "=== [4/5] Đăng ký Debezium CDC Connector ==="
@@ -55,4 +56,4 @@ register-cdc:
 
 setup-lifecycle:
 	@echo "=== [5/5] Thiết lập MinIO Lifecycle Policy (bảo vệ ổ đĩa) ==="
-	python scripts/utils/setup_minio_lifecycle.py
+	$(PYTHON) scripts/utils/setup_minio_lifecycle.py
