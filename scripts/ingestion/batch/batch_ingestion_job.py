@@ -21,9 +21,12 @@ Cấu hình trong .env:
 """
 import os
 import sys
+import shutil
 import zipfile
 import logging
 import threading
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from boto3.s3.transfer import TransferConfig
 from dotenv import load_dotenv
@@ -77,7 +80,7 @@ class ProgressPercentage:
             self._seen_so_far += bytes_amount
             percentage = (self._seen_so_far / self._size) * 100
             sys.stdout.write(
-                f"\r⏳ [Ingesting] {self._filename}: "
+                f"\r[>>] {self._filename}: "
                 f"{self._seen_so_far / MB:.2f} MB / {self._size / MB:.2f} MB "
                 f"({percentage:.2f}%)"
             )
@@ -108,17 +111,18 @@ def _extract_zip(zip_path: Path, target_dir: Path) -> list[str]:
                 extracted.append(out_path.name)
                 continue
             with zf.open(member) as src, open(out_path, 'wb') as dst:
-                dst.write(src.read())
+                # Tối ưu RAM & Tốc độ: Đọc/ghi theo chunk 16MB thay vì 64KB mặc định để tránh nghẽn I/O
+                shutil.copyfileobj(src, dst, length= 32 * MB)
             logger.info("[BatchJob]   Giải nén thành công: %s (%.1f MB)",
                         out_path.name, out_path.stat().st_size / MB)
             extracted.append(out_path.name)
     return extracted
 
 
-def _download_via_kaggle_api(target_dir: Path) -> bool:
+def _download_via_kaggle_api(out_zip_path: Path) -> bool:
     """
-    Tải toàn bộ dataset ZIP từ Kaggle API rồi giải nén tất cả CSV.
-    Trả về True nếu thành công.
+    Lấy link tải trực tiếp từ Kaggle API và dùng Multi-Threading để tăng tốc độ tải file ZIP.
+    Trả về True nếu tải xong thành công.
     """
     kaggle_user = os.getenv("KAGGLE_USERNAME")
     kaggle_key  = os.getenv("KAGGLE_KEY")
@@ -131,34 +135,90 @@ def _download_via_kaggle_api(target_dir: Path) -> bool:
         logger.error("[BatchJob]   KAGGLE_KEY=your_api_key")
         return False
 
+    url = f"https://www.kaggle.com/api/v1/datasets/download/{KAGGLE_DATASET}"
+    logger.info("[BatchJob] Lấy URL tải trực tiếp từ Kaggle API...")
+    
     try:
-        import kaggle  # noqa: F401
-    except ImportError:
-        logger.error("[BatchJob] Thiếu package 'kaggle'. Chạy: pip install kaggle")
-        return False
-
-    os.environ["KAGGLE_USERNAME"] = kaggle_user
-    os.environ["KAGGLE_KEY"]      = kaggle_key
-
-    import kaggle as kg
-    kg.api.authenticate()
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    # Tải toàn bộ dataset dưới dạng ZIP (bao gồm tất cả CSV)
-    logger.info("[BatchJob] Đang tải toàn bộ dataset từ Kaggle: %s", KAGGLE_DATASET)
-    try:
-        kg.api.dataset_download_files(
-            dataset=KAGGLE_DATASET,
-            path=str(target_dir),
-            unzip=True,      # Tự giải nén sau khi tải
-            force=False,
-            quiet=False,
-        )
-        logger.info("[BatchJob] Tải và giải nén từ Kaggle hoàn tất.")
-        return True
+        r_head = requests.get(url, auth=(kaggle_user, kaggle_key), stream=True, timeout=15)
+        r_head.raise_for_status()
+        direct_url = r_head.url
+        file_size = int(r_head.headers.get("Content-Length", 0))
+        r_head.close()
     except Exception as e:
-        logger.error("[BatchJob] Lỗi khi tải dataset từ Kaggle: %s", e)
+        logger.error("[BatchJob] Lỗi kết nối Kaggle API: %s", e)
         return False
+
+    if file_size == 0:
+        logger.error("[BatchJob] Không xác định được kích thước file từ Kaggle.")
+        return False
+
+    logger.info("[BatchJob] Kích thước dataset: %.2f GB. Bắt đầu tải đa luồng...", file_size / (1024**3))
+
+    # Pre-allocate file
+    with open(out_zip_path, "wb") as f:
+        f.truncate(file_size)
+
+    chunk_size = 50 * 1024 * 1024  # 50MB per chunk
+    chunks = []
+    for start in range(0, file_size, chunk_size):
+        end = min(start + chunk_size - 1, file_size - 1)
+        chunks.append((start, end))
+
+    downloaded_bytes = 0
+    lock = threading.Lock()
+    shutdown_event = threading.Event()
+    f_out = open(out_zip_path, "r+b")  # Mở file một lần dùng chung cho các luồng
+
+    def download_chunk(start, end):
+        nonlocal downloaded_bytes
+        headers = {"Range": f"bytes={start}-{end}"}
+        with requests.get(direct_url, headers=headers, timeout=60, stream=True) as resp:
+            resp.raise_for_status()
+            current_pos = start
+            # Tải streaming từng MB để cập nhật progress bar mượt mà
+            for chunk_data in resp.iter_content(chunk_size=1024 * 1024):
+                if shutdown_event.is_set():
+                    break
+                if chunk_data:
+                    with lock:
+                        f_out.seek(current_pos)
+                        f_out.write(chunk_data)
+                        current_pos += len(chunk_data)
+                        
+                        downloaded_bytes += len(chunk_data)
+                        pct = (downloaded_bytes / file_size) * 100
+                        sys.stdout.write(f"\r[>>] Đang tải (Multi-Thread): {downloaded_bytes / MB:.1f} MB / {file_size / MB:.1f} MB ({pct:.1f}%)")
+                        sys.stdout.flush()
+
+    success = True
+    try:
+        from concurrent.futures import wait
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(download_chunk, c[0], c[1]) for c in chunks]
+            # Vòng lặp chờ với timeout 1 giây để luồng chính (main thread) kịp bắt phím Ctrl+C
+            while futures:
+                done, not_done = wait(futures, timeout=1.0)
+                for future in done:
+                    future.result()  # Báo lỗi nếu 1 luồng bị crash
+                    futures.remove(future)
+    except KeyboardInterrupt:
+        logger.error("\n[BatchJob] Đã nhận lệnh ngắt (Ctrl+C). Đang dọn dẹp và đóng các luồng tải...")
+        shutdown_event.set()
+        success = False
+    except Exception as e:
+        logger.error("\n[BatchJob] Lỗi khi tải đa luồng: %s", e)
+        shutdown_event.set()
+        success = False
+    finally:
+        f_out.close()
+
+    sys.stdout.write("\n")
+    if not success and out_zip_path.exists():
+        out_zip_path.unlink()  # Cleanup file tải dở
+    elif success:
+        logger.info("[BatchJob] Tải dataset hoàn tất.")
+        
+    return success
 
 
 def discover_csv_files() -> list[Path]:
@@ -192,12 +252,21 @@ def download_dataset_if_needed() -> bool:
         extracted = _extract_zip(local_zip, DATASET_DIR)
         if extracted:
             logger.info("[BatchJob] Giải nén thành công %d file CSV.", len(extracted))
+            logger.info("[BatchJob] Đang xóa file ZIP gốc để giải phóng ổ cứng: %s", local_zip.name)
+            try:
+                local_zip.unlink()
+            except Exception as e:
+                logger.warning("[BatchJob] Không thể xóa file ZIP gốc: %s", e)
             return True
         logger.warning("[BatchJob] ZIP không chứa CSV nào. Thử tải từ Kaggle...")
 
-    # Case 3: Tải từ Kaggle API
+    # Case 3: Tải từ Kaggle API bằng cơ chế tải đa luồng
     logger.info("[BatchJob] Bắt đầu tải dataset từ Kaggle: %s", KAGGLE_DATASET)
-    return _download_via_kaggle_api(DATASET_DIR)
+    local_zip = PROJECT_ROOT / "ecommerce-behavior-data-from-multi-category-store.zip"
+    if _download_via_kaggle_api(local_zip):
+        # Tải xong file ZIP, đệ quy gọi lại hàm này để nó rơi vào Case 2 (giải nén)
+        return download_dataset_if_needed()
+    return False
 
 
 # ── Upload to MinIO ───────────────────────────────────────────────────────────
