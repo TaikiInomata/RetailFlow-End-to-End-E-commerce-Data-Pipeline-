@@ -247,3 +247,24 @@ services:
       SIMULATION_MAX_HOURS: "4"                 # Tự dừng sau 4 giờ dù chưa đạt max events
     networks:
       - retailflow_network
+  # =========================================
+  # SETUP INIT CONTAINER (Chạy 1 lần rồi tắt)
+  # =========================================
+  setup-init:
+    build:
+      context: ..
+      dockerfile: docker/setup/Dockerfile
+    container_name: retailflow_setup
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      debezium:
+        condition: service_healthy
+    env_file:
+      - ../.env
+      - ../.env.docker
+    networks:
+      - retailflow_network

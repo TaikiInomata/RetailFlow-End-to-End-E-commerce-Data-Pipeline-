@@ -171,24 +171,36 @@ def _download_via_kaggle_api(out_zip_path: Path) -> bool:
 
     def download_chunk(start, end):
         nonlocal downloaded_bytes
-        headers = {"Range": f"bytes={start}-{end}"}
-        with requests.get(direct_url, headers=headers, timeout=60, stream=True) as resp:
-            resp.raise_for_status()
-            current_pos = start
-            # Tải streaming từng MB để cập nhật progress bar mượt mà
-            for chunk_data in resp.iter_content(chunk_size=1024 * 1024):
-                if shutdown_event.is_set():
-                    break
-                if chunk_data:
-                    with lock:
-                        f_out.seek(current_pos)
-                        f_out.write(chunk_data)
-                        current_pos += len(chunk_data)
-                        
-                        downloaded_bytes += len(chunk_data)
-                        pct = (downloaded_bytes / file_size) * 100
-                        sys.stdout.write(f"\r[>>] Đang tải (Multi-Thread): {downloaded_bytes / MB:.1f} MB / {file_size / MB:.1f} MB ({pct:.1f}%)")
-                        sys.stdout.flush()
+        current_pos = start
+        retries = 5
+        while current_pos <= end and retries > 0:
+            if shutdown_event.is_set():
+                break
+            headers = {"Range": f"bytes={current_pos}-{end}"}
+            try:
+                with requests.get(direct_url, headers=headers, timeout=60, stream=True) as resp:
+                    resp.raise_for_status()
+                    # Tải streaming từng MB để cập nhật progress bar mượt mà
+                    for chunk_data in resp.iter_content(chunk_size=1024 * 1024):
+                        if shutdown_event.is_set():
+                            break
+                        if chunk_data:
+                            with lock:
+                                f_out.seek(current_pos)
+                                f_out.write(chunk_data)
+                                current_pos += len(chunk_data)
+                                
+                                downloaded_bytes += len(chunk_data)
+                                pct = (downloaded_bytes / file_size) * 100
+                                sys.stdout.write(f"\r[>>] Đang tải (Multi-Thread): {downloaded_bytes / MB:.1f} MB / {file_size / MB:.1f} MB ({pct:.1f}%)")
+                                sys.stdout.flush()
+                break # Tải xong chunk này thành công thì thoát vòng lặp retry
+            except Exception as e:
+                retries -= 1
+                if retries == 0:
+                    raise e
+                import time
+                time.sleep(2)
 
     success = True
     try:

@@ -13,7 +13,7 @@ load_dotenv(Path(__file__).parent.parent.parent / '.env')
 class MinioClientFactory:
     def __init__(self, endpoint=None, access_key=None, secret_key=None):
         # Tự động lấy cấu hình mặc định nếu người dùng không truyền tham số vào
-        self.endpoint_url = endpoint or f"http://localhost:{os.getenv('MINIO_API_PORT', 9000)}"
+        self.endpoint_url = endpoint or os.getenv("MINIO_ENDPOINT") or f"http://localhost:{os.getenv('MINIO_API_PORT', 9000)}"
         self.access_key = access_key or os.getenv("MINIO_ROOT_USER")
         self.secret_key = secret_key or os.getenv("MINIO_ROOT_PASSWORD")
         
