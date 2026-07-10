@@ -255,6 +255,8 @@ services:
       context: ..
       dockerfile: docker/setup/Dockerfile
     container_name: retailflow_setup
+    profiles:
+      - setup
     restart: "no"
     depends_on:
       postgres:

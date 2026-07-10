@@ -20,7 +20,12 @@ python -c "from scripts.simulation.mock_backend import TransactionSimulator; s =
 echo "=== [4/5] Registering Debezium CDC Connector ==="
 curl -sf -X POST http://debezium:8083/connectors \
     -H "Content-Type: application/json" \
-    -d @config/debezium/ecommerce-postgres-connector.json || echo "Connector might already exist or Debezium is not ready."
+    -d @config/debezium/ecommerce-postgres-connector.json || echo "Postgres Connector might already exist or Debezium is not ready."
+
+echo "=== [4.5/5] Registering S3 Sink Connector ==="
+curl -sf -X POST http://debezium:8083/connectors \
+    -H "Content-Type: application/json" \
+    -d @config/s3/s3-sink-connector.json || echo "S3 Sink Connector might already exist or Debezium is not ready."
 
 echo "=== [5/5] Setup MinIO Lifecycle Policy ==="
 python scripts/utils/setup_minio_lifecycle.py
