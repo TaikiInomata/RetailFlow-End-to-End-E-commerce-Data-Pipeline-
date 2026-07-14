@@ -83,10 +83,14 @@ def main() -> None:
     logger.info("Bucket: %s", BUCKET_NAME)
 
     factory   = MinioClientFactory()
+    if not factory.verify_connection():
+        logger.critical("[BatchJob] Dừng Job: Không thể kết nối tới MinIO Data Lake.")
+        sys.exit(1)
+    
     s3_client = factory.get_client()
-
-    # Đảm bảo bucket tồn tại
-    factory.ensure_bucket_exists(BUCKET_NAME)
+    if not factory.ensure_bucket_exists(BUCKET_NAME):
+        logger.critical("[BatchJob] Dừng Job: Không thể tạo hoặc truy cập bucket '%s'.", BUCKET_NAME)
+        sys.exit(1)
 
     # Build config
     config = build_lifecycle_config(LIFECYCLE_RULES)
