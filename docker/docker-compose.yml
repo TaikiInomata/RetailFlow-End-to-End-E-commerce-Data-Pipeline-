@@ -15,6 +15,30 @@ volumes:
     driver: local
   retailflow_minio_data:
     driver: local
+  retailflow_airflow_db:
+    driver: local
+
+# ==========================================
+# YAML ANCHOR: Cấu hình chung cho cụm Airflow
+# → Dùng <<: *airflow-common để kế thừa vào từng service
+# ==========================================
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.2
+  profiles:
+    - airflow
+  environment: &airflow-env                           # Anchor riêng cho phần environment
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/${AIRFLOW_DB_NAME}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+  volumes:
+    - ../dags:/opt/airflow/dags           # Bind mount: thư mục DAG thật trên máy host
+    - ../scripts:/opt/airflow/scripts     # Bind mount: để DAG gọi được scripts Python
+  depends_on:
+    postgres-airflow:
+      condition: service_healthy
+  networks:
+    - retailflow_network
 
 services:
   # =========================================
@@ -270,3 +294,72 @@ services:
       - ../.env.docker
     networks:
       - retailflow_network
+
+  # =========================================
+  # CỤM APACHE AIRFLOW
+  # =========================================
+
+  # 1. METADATA DATABASE (Riêng biệt với OLTP Postgres)
+  postgres-airflow:
+    image: postgres:15
+    container_name: retailflow_postgres_airflow
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
+    ports:
+      - "${AIRFLOW_DB_PORT}:5432"                # Tránh xung đột với Postgres OLTP (5432)
+    volumes:
+      - retailflow_airflow_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AIRFLOW_DB_USER} -d ${AIRFLOW_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - retailflow_network
+
+  # 2. KHỞI TẠO: Tạo bảng metadata + tạo user admin (Chạy 1 lần)
+  airflow-init:
+    <<: *airflow-common                              # Kế thừa: image, profiles, volumes, depends_on, networks
+    container_name: retailflow_airflow_init
+    restart: "no"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USER} \
+          --password ${AIRFLOW_ADMIN_PASSWORD} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@retailflow.local
+    environment:
+      <<: *airflow-env                               # Kế thừa env chung, thêm biến riêng bên dưới
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+
+  # 3. GIAO DIỆN WEB
+  airflow-webserver:
+    <<: *airflow-common                              # Kế thừa: image, profiles, volumes, depends_on, networks
+    container_name: retailflow_airflow_webserver
+    restart: unless-stopped
+    command: webserver
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT}:8080"             # Tránh xung đột với Kafka UI (8080)
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # 4. BỘ LẬP LỊCH
+  airflow-scheduler:
+    <<: *airflow-common                              # Kế thừa: image, profiles, volumes, depends_on, networks
+    container_name: retailflow_airflow_scheduler
+    restart: unless-stopped
+    command: scheduler
