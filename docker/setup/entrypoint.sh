@@ -11,6 +11,9 @@ python scripts/ingestion/batch/batch_ingestion_job.py
 echo "=== [2/4] Seeding Product Catalog into PostgreSQL ==="
 python scripts/seeds/seed_product_catalog.py
 
+echo "=== [2.5/4] Dọn dẹp CSV cục bộ sau khi Seed hoàn tất ==="
+rm -f scripts/ingestion/batch/datasets/*.csv && echo "🗑️  Đã xóa toàn bộ file CSV khỏi nhớ Container." || echo "⚠️  Không có file CSV nào cần dọn."
+
 echo "=== [3/4] Fetching Exchange Rates ==="
 python scripts/ingestion/fetch/fetch_exchange_rates.py
 
