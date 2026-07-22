@@ -3,7 +3,7 @@
   "config": {
     "connector.class": "io.confluent.connect.s3.S3SinkConnector",
     "tasks.max": "1",
-    "topics": "retailflow_server.public.orders,retailflow_server.public.users",
+    "topics": "retailflow_server_v2.public.orders,retailflow_server_v2.public.users,retailflow_server_v2.public.products",
     
     "s3.region": "us-east-1",
     "s3.bucket.name": "bronze-zone",

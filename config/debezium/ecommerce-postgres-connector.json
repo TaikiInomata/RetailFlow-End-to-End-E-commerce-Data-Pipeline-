@@ -1,5 +1,5 @@
 {
-  "name": "ecommerce-postgres-connector",
+  "name": "ecommerce-postgres-connector-v2",
   "config": {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
     "plugin.name": "pgoutput",
@@ -10,8 +10,8 @@
     "database.password": "${env:DB_PASSWORD}",
     "database.dbname": "${env:DB_NAME}",
 
-    "topic.prefix": "retailflow_server",
-    "table.include.list": "public.orders,public.users",
+    "topic.prefix": "retailflow_server_v2",
+    "table.include.list": "public.orders,public.users,public.products",
 
     "topic.creation.enable": "true",
     "topic.creation.default.partitions": "3",
@@ -24,7 +24,7 @@
     "topic.creation.cdc.replication.factor": "1",
     "topic.creation.cdc.cleanup.policy": "delete",
 
-    "slot.name": "retailflow_ecommerce_slot",
+    "slot.name": "retailflow_ecommerce_slot_v2",
     "publication.name": "retailflow_ecommerce_pub",
 
     "snapshot.mode": "initial",
