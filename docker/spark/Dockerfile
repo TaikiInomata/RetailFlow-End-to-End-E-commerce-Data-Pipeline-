@@ -1,9 +1,9 @@
 # ============================================================
 # Spark Streaming Image — retailflow-spark
-# Base: apache/spark:4.1.2 (official Apache image, Java + Hadoop trên Linux)
+# Base: apache/spark:3.5.4 (official Apache image, Java + Hadoop trên Linux)
 # Role: Chạy PySpark job clickstream_streaming.py liên tục
 # ============================================================
-FROM apache/spark:4.1.2
+FROM apache/spark:3.5.4
 
 USER root
 WORKDIR /app

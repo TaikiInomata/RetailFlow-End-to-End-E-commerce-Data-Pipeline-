@@ -313,89 +313,18 @@ def main():
         logger.critical("[BatchJob] Dừng Job: Không thể tải dataset. Xem hướng dẫn ở trên.")
         sys.exit(1)
 
-    # 2. Khởi tạo kết nối MinIO
-    factory = MinioClientFactory()
-    if not factory.verify_connection():
-        logger.critical("[BatchJob] Dừng Job: Không thể kết nối tới MinIO Data Lake.")
-        sys.exit(1)
-
-    minio_client = factory.get_client()
-    if not factory.ensure_bucket_exists(BUCKET_NAME):
-        logger.critical("[BatchJob] Dừng Job: Không thể tạo hoặc truy cập bucket '%s'.", BUCKET_NAME)
-        sys.exit(1)
-
-    # 3. Khám phá tất cả CSV files hiện có trong DATASET_DIR
+    # 2. Khám phá tất cả CSV files hiện có trong DATASET_DIR
     csv_files = discover_csv_files()
     if not csv_files:
         logger.critical("[BatchJob] Không tìm thấy file CSV nào trong %s sau bước download.", DATASET_DIR)
         sys.exit(1)
 
-    logger.info("[BatchJob] Sẽ upload %d CSV file(s):", len(csv_files))
+    logger.info("[BatchJob] Sẽ sử dụng %d CSV file(s) để seed cho PostgreSQL:", len(csv_files))
     for f in csv_files:
         logger.info("[BatchJob]   • %s (%.2f GB)", f.name, f.stat().st_size / (1024 ** 3))
 
-    # Audit Trail
-    success_files       = []
-    failed_files        = []
-    unpartitioned_files = []
-
-    # 4. Upload từng file lên MinIO
-    for local_file_path in csv_files:
-        file_name = local_file_path.name
-
-        # Xác định đường dẫn partition trên MinIO
-        partition = _parse_partition(file_name)
-        if partition:
-            year, month_num = partition
-            minio_object_path = f"batch_ecommerce/year={year}/month={month_num}/{file_name}"
-        else:
-            minio_object_path = f"batch_ecommerce/unpartitioned/{file_name}"
-            unpartitioned_files.append(file_name)
-            logger.warning("[BatchJob] Không parse được partition từ '%s' — chuyển vào unpartitioned/.", file_name)
-
-        logger.info("[BatchJob] Bắt đầu xử lý: %s → s3://%s/%s",
-                    file_name, BUCKET_NAME, minio_object_path)
-
-        try:
-            minio_client.upload_file(
-                Filename=str(local_file_path),
-                Bucket=BUCKET_NAME,
-                Key=minio_object_path,
-                Config=transfer_config,
-                Callback=ProgressPercentage(local_file_path),
-            )
-            print()  # Xuống dòng sau progress bar
-            success_files.append(file_name)
-            logger.info("[BatchJob] ✅ Upload thành công: s3://%s/%s", BUCKET_NAME, minio_object_path)
-        except Exception as e:
-            print()
-            logger.error("[BatchJob] Upload thất bại cho file '%s': %s", file_name, e)
-            failed_files.append({"file": file_name, "error": str(e)})
-
-    # 5. Báo cáo tổng kết (Audit Report)
-    total = len(csv_files)
-    logger.info("[BatchJob] === BÁO CÁO TỔNG KẾT INGESTION ===")
-
-    if unpartitioned_files:
-        logger.warning("[BatchJob] %d/%d file không xác định được partition:",
-                       len(unpartitioned_files), total)
-        for f in unpartitioned_files:
-            logger.warning("[BatchJob]   - %s", f)
-
-    logger.info("[BatchJob] Upload thành công : %d/%d file.", len(success_files), total)
-    for f in success_files:
-        logger.info("[BatchJob]   + %s", f)
-
-    if failed_files:
-        logger.error("[BatchJob] Upload thất bại   : %d file.", len(failed_files))
-        for item in failed_files:
-            logger.error("[BatchJob]   - %s | Lý do: %s", item['file'], item['error'])
-        logger.critical("[BatchJob] KẾT LUẬN: JOB THẤT BẠI MỘT PHẦN.")
-        sys.exit(1)
-    else:
-        logger.info("[BatchJob] KẾT LUẬN: JOB HOÀN THÀNH — %d/%d file nạp thành công.",
-                    len(success_files), total)
-        sys.exit(0)
+    logger.info("[BatchJob] Đã tắt tính năng Upload lên MinIO theo yêu cầu. Dữ liệu sẽ chỉ được dùng để seed Postgres.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
