@@ -74,7 +74,8 @@ def process_silver_cdc(table_name, pk_col="id"):
         col("op"),
         col("ts_ms"),
         pk_expr.alias(pk_col),
-        *after_cols
+        *after_cols,
+        expr("op = 'd'").alias("is_deleted")
     )
 
     # 3. KHỬ TRÙNG LẶP (DEDUPLICATION)
@@ -94,13 +95,19 @@ def process_silver_cdc(table_name, pk_col="id"):
         logger.info("🔄 Bảng Silver đã tồn tại -> Thực hiện MERGE INTO (Upsert)...")
         delta_table = DeltaTable.forPath(spark, silver_path)
         
-        # Merge logic bao gồm Xử lý Delete (Hard Delete)
+        # Merge logic bao gồm Xử lý Delete (Soft Delete)
         delta_table.alias("target") \
             .merge(
                 df_latest.alias("source"),
                 f"target.{pk_col} = source.{pk_col}"
             ) \
-            .whenMatchedDelete(condition="source.op = 'd'") \
+            .whenMatchedUpdate( # SOFT DELETE: Chỉ cập nhật cờ xóa và thời gian xóa, giữ nguyên dữ liệu lịch sử
+                condition="source.op = 'd'",
+                set={
+                    "is_deleted": "true",
+                    "ts_ms": "source.ts_ms"
+                }
+            ) \
             .whenMatchedUpdateAll(condition="source.op != 'd'") \
             .whenNotMatchedInsertAll(condition="source.op != 'd'") \
             .execute()
