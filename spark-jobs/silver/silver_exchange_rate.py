@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+from pathlib import Path
 # pyrefly: ignore [missing-import]
 from pyspark.sql.functions import col, explode, to_date, from_json, to_json
 # pyrefly: ignore [missing-import]
@@ -18,8 +19,12 @@ logger = logging.getLogger("Silver_ExchangeRate")
 
 # Xử lý Import an toàn cho cả môi trường Local (Dev) và Production (Spark-Submit)
 try:
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'common'))
     # pyrefly: ignore [missing-import]
     from spark_builder import get_spark_session
+    # pyrefly: ignore [missing-import]
+    from minio_client import MinioClientFactory
 except ImportError:
     # Fallback cho Dev/Local khi chưa set PYTHONPATH
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
@@ -42,28 +47,8 @@ def process_silver_exchange_rates():
     silver_bucket = "silver-zone"
     silver_path = f"s3a://{silver_bucket}/exchange_rates"
     
-    # Bổ sung: Tự động kiểm tra và tạo bucket silver-zone nếu chưa tồn tại
-    import boto3
-    from botocore.exceptions import ClientError
-    import os
-    
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
-        aws_access_key_id=os.getenv("MINIO_ROOT_USER"),
-        aws_secret_access_key=os.getenv("MINIO_ROOT_PASSWORD")
-    )
-    
-    try:
-        s3_client.head_bucket(Bucket=silver_bucket)
-    except ClientError as e:
-        error_code = e.response['Error']['Code']
-        if error_code == '404':
-            logger.info(f"Bucket '{silver_bucket}' chưa tồn tại. Đang tiến hành tạo mới...")
-            s3_client.create_bucket(Bucket=silver_bucket)
-            logger.info(f"✅ Đã tạo thành công bucket '{silver_bucket}'.")
-        else:
-            raise e
+    # 0. ĐẢM BẢO BUCKET ĐÍCH TỒN TẠI (Sử dụng Utils dùng chung)
+    MinioClientFactory().ensure_bucket_exists("silver-zone")
             
     logger.info(f"Đang đọc dữ liệu thô từ: {bronze_path}")
     
@@ -85,9 +70,9 @@ def process_silver_exchange_rates():
             logger.warning("Không có dữ liệu mới ở Bronze Zone. Bỏ qua chạy Job.")
             sys.exit(0)
             
-        logger.info("Schema dữ liệu gốc (Bronze):")
-        # printSchema là hàm in trực tiếp ra sys.stdout, tạm chấp nhận để debug Schema
-        df_raw.printSchema()
+        # Sử dụng API nội bộ của Java để lấy Schema String, tránh in trực tiếp ra console làm vỡ format log
+        schema_string = df_raw._jdf.schema().treeString()
+        logger.info(f"Schema dữ liệu gốc (Bronze):\n{schema_string}")
 
         # 3. BIẾN ĐỔI DỮ LIỆU (TRANSFORMATION)
         # Ép kiểu cấu trúc lồng nhau (Struct) thành Map(Key-Value) để kháng lỗi khi API đổi Schema
@@ -118,7 +103,9 @@ def process_silver_exchange_rates():
             .partitionBy("exchange_date") \
             .save(silver_path)
             
-        logger.info("✅ Đã hoàn tất xử lý Tầng Silver cho Exchange Rates!")
+        # Cực kỳ quan trọng: Báo cáo lại số lượng bản ghi đã xử lý để giám sát Pipeline
+        record_count = df_silver.count()
+        logger.info(f"✅ Đã hoàn tất xử lý Tầng Silver cho Exchange Rates! Tổng số bản ghi ghi được: {record_count}")
         
     except Exception as e:
         logger.error(f"❌ Có lỗi xảy ra trong quá trình xử lý Spark: {str(e)}", exc_info=True)

@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / '.env')
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'common'))
 # pyrefly: ignore [missing-import]
 from minio_client import MinioClientFactory
 

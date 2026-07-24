@@ -33,7 +33,7 @@ from dotenv import load_dotenv
 
 # --- SETUP PATH ---
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "utils"))
+sys.path.insert(0, str(PROJECT_ROOT / "common"))
 load_dotenv(PROJECT_ROOT / '.env')
 
 # pyrefly: ignore [missing-import]

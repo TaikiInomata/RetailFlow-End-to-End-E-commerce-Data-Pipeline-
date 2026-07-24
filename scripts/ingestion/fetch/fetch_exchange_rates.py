@@ -8,7 +8,7 @@ from pathlib import Path
 from requests.adapters import HTTPAdapter, Retry
 
 # Mẹo: Giúp Python nhận diện được thư mục scripts/utils khi chạy từ bất kỳ đâu
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'utils'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / 'common'))
 # pyrefly: ignore [missing-import]
 from minio_client import MinioClientFactory
 

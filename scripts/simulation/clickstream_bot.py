@@ -19,8 +19,6 @@ from faker import Faker
 
 load_dotenv(Path(__file__).parent.parent.parent / '.env')
 
-# SharedCatalog nằm ở scripts/utils/ — thêm đúng thư mục vào sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
 # pyrefly: ignore [missing-import]
 from shared_catalog import SharedCatalog  # noqa: E402
 

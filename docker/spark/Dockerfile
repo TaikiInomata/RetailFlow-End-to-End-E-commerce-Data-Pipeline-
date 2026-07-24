@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements-spark.txt
 
 # Copy spark-jobs và scripts/utils (MinioClientFactory)
 COPY spark-jobs/ ./spark-jobs/
-COPY scripts/utils/ ./scripts/utils/
+COPY common/ ./common/
 
 # Entrypoint: chạy Spark Streaming job bằng python3 (apache/spark image dùng python3)
 CMD ["python3", "spark-jobs/bronze/clickstream_streaming.py"]

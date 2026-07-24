@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements-python.txt
 
 # Copy simulation scripts và utils
 COPY scripts/simulation/ ./scripts/simulation/
-COPY scripts/utils/ ./scripts/utils/
+COPY common/ ./common/
 
 # Copy startup script
 COPY docker/simulation/start.sh ./start.sh
