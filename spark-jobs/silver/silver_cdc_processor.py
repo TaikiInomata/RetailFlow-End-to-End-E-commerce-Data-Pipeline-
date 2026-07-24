@@ -1,28 +1,30 @@
-import os
+# stdlib
+import argparse
 import sys
 import logging
 from pathlib import Path
+
+# Gắn đường dẫn TRƯỚC tất cả local import
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))  # Cho spark_builder
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'common'))  # Cho minio_client
+
+# third-party
 # pyrefly: ignore [missing-import]
 from pyspark.sql.functions import col, row_number, expr
 # pyrefly: ignore [missing-import]
 from pyspark.sql.window import Window
 # pyrefly: ignore [missing-import]
+from pyspark.sql.types import StructType
+# pyrefly: ignore [missing-import]
 from pyspark.sql.utils import AnalysisException
 # pyrefly: ignore [missing-import]
 from delta.tables import DeltaTable
 
-# Gắn đường dẫn để import các thư mục utils
-sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))  # Cho spark_builder
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'common'))  # Cho minio_client
-
+# local
 # pyrefly: ignore [missing-import]
 from spark_builder import get_spark_session
 # pyrefly: ignore [missing-import]
 from minio_client import MinioClientFactory
-
-import argparse
-# pyrefly: ignore [missing-import]
-from pyspark.sql.types import StructType
 
 # Cấu hình Logger mặc định (Sẽ cập nhật tên logger động bên trong hàm)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s")
@@ -51,7 +53,8 @@ def process_silver_cdc(table_name, pk_col="id"):
             sys.exit(0)
         raise e
         
-    if df_raw.limit(1).count() == 0:
+    # Fix: isEmpty() (Spark 3.3+) hiệu quả hơn limit(1).count() — không trigger full shuffle
+    if df_raw.isEmpty():
         logger.warning(f"⚠️ Không có dữ liệu CDC {table_name} mới. Kết thúc.")
         sys.exit(0)
 
@@ -86,7 +89,8 @@ def process_silver_cdc(table_name, pk_col="id"):
                             .filter(col("rn") == 1) \
                             .drop("rn")
     
-    logger.info(f"✨ Schema sau khi làm sạch:\n{df_latest._jdf.schema().treeString()}")
+    # Fix: Dùng str(schema) thay vì _jdf (Private JVM API — dễ bị xóa khi nâng cấp Spark)
+    logger.info(f"✨ Schema sau khi làm sạch:\n{str(df_latest.schema)}")
 
     # 4. LOGIC UPSERT VỚI DELTA LAKE (MERGE INTO)
     logger.info(f"💾 Đang đồng bộ trạng thái xuống: {silver_path}")

@@ -1,13 +1,26 @@
+# stdlib
 import os
 import sys
 import logging
 from pathlib import Path
+
+# Gắn đường dẫn TRƯỚC tất cả local import — loại bỏ try/except ImportError anti-pattern
+sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'common'))
+
+# third-party
 # pyrefly: ignore [missing-import]
 from pyspark.sql.functions import col, explode, to_date, from_json, to_json
 # pyrefly: ignore [missing-import]
 from pyspark.sql.types import MapType, StringType, DoubleType
 # pyrefly: ignore [missing-import]
 from pyspark.sql.utils import AnalysisException
+
+# local
+# pyrefly: ignore [missing-import]
+from spark_builder import get_spark_session
+# pyrefly: ignore [missing-import]
+from minio_client import MinioClientFactory
 
 # Cấu hình Logging chuẩn Production
 logging.basicConfig(
@@ -16,20 +29,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger("Silver_ExchangeRate")
-
-# Xử lý Import an toàn cho cả môi trường Local (Dev) và Production (Spark-Submit)
-try:
-    sys.path.insert(0, str(Path(__file__).parent.parent / 'utils'))
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'common'))
-    # pyrefly: ignore [missing-import]
-    from spark_builder import get_spark_session
-    # pyrefly: ignore [missing-import]
-    from minio_client import MinioClientFactory
-except ImportError:
-    # Fallback cho Dev/Local khi chưa set PYTHONPATH
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'utils')))
-    # pyrefly: ignore [missing-import]
-    from spark_builder import get_spark_session
 
 def process_silver_exchange_rates():
     # 1. Khởi tạo Spark Session
@@ -65,14 +64,13 @@ def process_silver_exchange_rates():
                 sys.exit(0)
             raise e
             
-        # Kiểm tra rỗng tối ưu (limit 1 thay vì quét toàn rdd)
-        if df_raw.limit(1).count() == 0:
+        # Fix: isEmpty() hiệu quả hơn limit(1).count() — không trigger full shuffle
+        if df_raw.isEmpty():
             logger.warning("Không có dữ liệu mới ở Bronze Zone. Bỏ qua chạy Job.")
             sys.exit(0)
             
-        # Sử dụng API nội bộ của Java để lấy Schema String, tránh in trực tiếp ra console làm vỡ format log
-        schema_string = df_raw._jdf.schema().treeString()
-        logger.info(f"Schema dữ liệu gốc (Bronze):\n{schema_string}")
+        # Fix: Dùng str(schema) thay vì _jdf (Private JVM API)
+        logger.info(f"Schema dữ liệu gốc (Bronze):\n{str(df_raw.schema)}")
 
         # 3. BIẾN ĐỔI DỮ LIỆU (TRANSFORMATION)
         # Ép kiểu cấu trúc lồng nhau (Struct) thành Map(Key-Value) để kháng lỗi khi API đổi Schema
@@ -97,14 +95,18 @@ def process_silver_exchange_rates():
         # Delta Lake sẽ tự động đối chiếu các partition có trong df_silver và chỉ ghi đè những partition đó.
         logger.info(f"Đang ghi dữ liệu (Dynamic Overwrite) xuống: {silver_path}")
         
+        # Fix: cache() để count() và write dùng chung plan, tránh Spark tính toán 2 lần
+        df_silver.cache()
+        record_count = df_silver.count()
+        
         df_silver.write \
             .format("delta") \
             .mode("overwrite") \
             .partitionBy("exchange_date") \
             .save(silver_path)
+        
+        df_silver.unpersist()
             
-        # Cực kỳ quan trọng: Báo cáo lại số lượng bản ghi đã xử lý để giám sát Pipeline
-        record_count = df_silver.count()
         logger.info(f"✅ Đã hoàn tất xử lý Tầng Silver cho Exchange Rates! Tổng số bản ghi ghi được: {record_count}")
         
     except Exception as e:
