@@ -17,6 +17,10 @@ import time
 import os
 import sys
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load biến môi trường từ .env
+load_dotenv()
 
 # Ép stdout thành UTF-8 để tránh lỗi UnicodeEncodeError trên Windows
 if hasattr(sys.stdout, "reconfigure"):

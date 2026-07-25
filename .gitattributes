@@ -1,0 +1,14 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Force LF for shell scripts (Crucial for Docker containers running on Linux)
+*.sh text eol=lf
+*.bash text eol=lf
+docker-compose*.yml text eol=lf
+Dockerfile* text eol=lf
+
+# Explicitly declare text files you want to always be normalized and converted to native line endings on checkout
+*.py text
+*.md text
+*.json text
+*.csv text

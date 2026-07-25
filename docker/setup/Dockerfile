@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy specific directories needed for setup
+COPY common/ ./common/
 COPY scripts/ ./scripts/
 COPY config/debezium/ ./config/debezium/
 COPY config/s3/ ./config/s3/
