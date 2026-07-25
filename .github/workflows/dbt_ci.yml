@@ -1,0 +1,64 @@
+name: dbt CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dbt/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'dbt/**'
+
+jobs:
+  dbt-compile-test:
+    name: dbt Compile & Parse
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dbt-trino
+        run: pip install dbt-trino==1.10.2
+
+      - name: Create dummy profiles.yml for CI
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << 'EOF'
+          retailflow_dbt:
+            target: ci
+            outputs:
+              ci:
+                type: trino
+                method: none
+                user: ci
+                host: localhost
+                port: 8080
+                catalog: minio
+                schema: gold
+                threads: 1
+                http_scheme: http
+          EOF
+
+      - name: dbt parse (validate all SQL & YAML syntax)
+        working-directory: dbt
+        run: dbt parse --profiles-dir ~/.dbt --project-dir .
+
+      - name: dbt compile (render all SQL templates)
+        working-directory: dbt
+        run: dbt compile --profiles-dir ~/.dbt --project-dir .
+
+      - name: Upload compiled SQL artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dbt-compiled-sql
+          path: dbt/target/compiled/
+          retention-days: 7

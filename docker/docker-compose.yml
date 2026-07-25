@@ -21,6 +21,8 @@ volumes:
     driver: local
   retailflow_trino_metastore:         # File-based metastore cho Trino Delta Lake catalog
     driver: local
+  retailflow_superset_home:           # Superset metadata (dashboard configs, SQLite DB)
+    driver: local
 
 # ==========================================
 # YAML ANCHOR: Cấu hình chung cho cụm Airflow
@@ -336,6 +338,38 @@ services:
     env_file:
       - ../.env
       - ../.env.docker
+    networks:
+      - retailflow_network
+
+  # =========================================
+  # APACHE SUPERSET — BI / Dashboard Layer
+  # =========================================
+  superset:
+    image: apache/superset:4.1.1
+    container_name: retailflow_superset
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-retailflow_superset_secret_2026}
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+      PYTHONPATH: /app
+    volumes:
+      - retailflow_superset_home:/app/superset_home
+      - ../superset/superset_config.py:/app/superset_config.py:ro
+      - ../superset/init_superset.sh:/app/init_superset.sh:ro
+    entrypoint: ["/bin/bash", "/app/init_superset.sh"]
+    depends_on:
+      trino:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     networks:
       - retailflow_network
 
