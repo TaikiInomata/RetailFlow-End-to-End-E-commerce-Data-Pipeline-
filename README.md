@@ -24,60 +24,60 @@
 ```mermaid
 flowchart LR
     subgraph SOURCE["📦 Source Systems"]
-        PG[("PostgreSQL<br>OLTP")]
-        API["Exchange Rate<br>REST API"]
-        APP["Web App<br>Nginx"]
+        PG[(PostgreSQL\nOLTP)]
+        API[Exchange Rate\nREST API]
+        APP[Web App\nNginx]
     end
 
     subgraph INGEST["🔄 Ingestion"]
-        DBZ["Debezium<br>CDC Connector"]
-        KFK["Apache Kafka<br>Message Broker"]
-        SIM["Simulation<br>Bot"]
+        DBZ[Debezium\nCDC Connector]
+        KFK[Apache Kafka\nMessage Broker]
+        SIM[Simulation\nBot]
     end
 
-    subgraph BRONZE["🥉 Bronze Zone<br>MinIO Raw"]
-        B1["CDC Events<br>JSON"]
-        B2["Exchange Rate<br>JSON"]
-        B3["Clickstream<br>Parquet"]
+    subgraph BRONZE["🥉 Bronze Zone\nMinIO Raw"]
+        B1[CDC Events\nJSON]
+        B2[Exchange Rate\nJSON]
+        B3[Clickstream\nParquet]
     end
 
-    subgraph SILVER["🥈 Silver Zone<br>Delta Lake"]
-        S1["orders<br>products<br>users"]
-        S2["exchange_rates"]
-        S3["clickstream"]
+    subgraph SILVER["🥈 Silver Zone\nDelta Lake"]
+        S1[orders\nproducts\nusers]
+        S2[exchange_rates]
+        S3[clickstream]
     end
 
-    subgraph GOLD["🥇 Gold Zone<br>Delta Lake"]
-        G1["daily_sales_summary<br>product_performance"]
-        G2["customer_snapshot<br>RFM Segments"]
-        G3["daily_funnel<br>product_engagement"]
+    subgraph GOLD["🥇 Gold Zone\nDelta Lake"]
+        G1[daily_sales_summary\nproduct_performance]
+        G2[customer_snapshot\nRFM Segments]
+        G3[daily_funnel\nproduct_engagement]
     end
 
     subgraph SERVE["📊 Serving"]
-        SS["Apache Superset<br>Dashboard"]
-        TN["Trino<br>Query Engine"]
+        SS[Apache Superset\nDashboard]
+        TN[Trino\nQuery Engine]
     end
 
-    PG -->|"WAL Replication"| DBZ --> KFK --> B1
-    API -->|"Daily 8AM"| B2
-    APP -->|"Clickstream Events"| SIM --> KFK --> B3
+    PG -->|WAL Replication| DBZ --> KFK --> B1
+    API -->|Daily 8AM| B2
+    APP -->|Clickstream Events| SIM --> KFK --> B3
 
-    B1 -->|"Spark Structured<br>Streaming"| S1
-    B2 -->|"PySpark Batch"| S2
-    B3 -->|"Spark Structured<br>Streaming"| S3
+    B1 -->|Spark Structured\nStreaming| S1
+    B2 -->|PySpark Batch| S2
+    B3 -->|Spark Structured\nStreaming| S3
 
-    S1 -->|"dbt Incremental"| G1
-    S1 & S2 -->|"dbt Incremental"| G2
-    S3 -->|"dbt Incremental"| G3
+    S1 -->|dbt Incremental| G1
+    S1 & S2 -->|dbt Incremental| G2
+    S3 -->|dbt Incremental| G3
 
     G1 & G2 & G3 --> TN --> SS
 
     subgraph ORCH["⚙️ Orchestration — Apache Airflow"]
-        D1["daily_exchange_rate<br>0 1 * * *"]
-        D2["frequent_cdc<br>*/15 * * * *"]
-        D3["frequent_clickstream<br>*/30 * * * *"]
-        D4["gold_dbt_pipeline<br>Dataset-triggered"]
-        D5["maintenance<br>0 3 * * *"]
+        D1[daily_exchange_rate\n0 1 * * *]
+        D2[frequent_cdc\n*/15 * * * *]
+        D3[frequent_clickstream\n*/30 * * * *]
+        D4[gold_dbt_pipeline\nDataset-triggered]
+        D5[maintenance\n0 3 * * *]
     end
 ```
 
