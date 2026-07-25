@@ -17,6 +17,10 @@ import time
 import sys
 from datetime import datetime
 
+# Ép stdout thành UTF-8 để tránh lỗi UnicodeEncodeError trên Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 try:
     import trino
     from tabulate import tabulate
@@ -99,10 +103,10 @@ def wait_for_dag(run_id: str, timeout: int = 300) -> str:
 
 
 def run_idempotency_test():
-    print("\n" + "═" * 65)
-    print("🧪 IDEMPOTENCY TEST — Gold Pipeline")
+    print("\n" + "=" * 65)
+    print("  IDEMPOTENCY TEST - Gold Pipeline")
     print(f"   Thời gian bắt đầu: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("═" * 65)
+    print("=" * 65)
 
     # ── Bước 1: Lấy số dòng ban đầu ──────────────────────────────────────────
     print("\n📊 Bước 1: Đếm số dòng ban đầu...")
@@ -154,14 +158,14 @@ def run_idempotency_test():
             results["pass"] = False
 
     # ── Báo cáo tổng kết ─────────────────────────────────────────────────────
-    print("\n" + "═" * 65)
+    print("\n" + "=" * 65)
     if results["pass"]:
-        print("✅ IDEMPOTENCY TEST: PASSED")
+        print("  IDEMPOTENCY TEST: PASSED")
         print("   Tất cả bảng Gold không bị duplicate sau khi trigger lại nhiều lần.")
     else:
-        print("❌ IDEMPOTENCY TEST: FAILED")
+        print("  IDEMPOTENCY TEST: FAILED")
         print("   Phát hiện dữ liệu bị nhân đôi! Cần kiểm tra lại pipeline.")
-    print("═" * 65)
+    print("=" * 65)
     print(f"   Thời gian kết thúc: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     return results["pass"]
