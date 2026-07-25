@@ -19,7 +19,19 @@
 
 ---
 
+## 💡 Dự án giải quyết bài toán gì cho doanh nghiệp?
+
+Dự án **RetailFlow** được thiết kế như một giải pháp nền tảng Dữ liệu (Data Platform) hoàn chỉnh để giải quyết các bài toán lõi trong doanh nghiệp Thương mại điện tử:
+1. **Phá vỡ rào cản dữ liệu (Data Silos):** Thu thập và tập trung hóa dữ liệu từ nhiều nguồn khác nhau (Database giao dịch OLTP, Hệ thống Tracking hành vi Web/App, API bên thứ ba) về một nguồn sự thật duy nhất (Single Source of Truth).
+2. **Bảo vệ hệ thống bán hàng (Offload OLTP):** Sử dụng kiến trúc **CDC (Change Data Capture)** qua Debezium và Kafka để bắt các thay đổi dữ liệu theo thời gian thực mà không cần chạy các câu lệnh truy vấn nặng (quét bảng) trên database bán hàng, giúp hệ thống luôn mượt mà.
+3. **Thấu hiểu khách hàng (Customer 360 & Funnel):** Kết hợp dữ liệu đơn hàng (Giao dịch) và dữ liệu Clickstream (Hành vi) để xây dựng Phễu chuyển đổi (Conversion Funnel) và Phân khúc khách hàng (RFM Segments). Điều này giúp đội ngũ Marketing và Sales ra quyết định chính xác hơn.
+4. **Tối ưu chi phí & Đảm bảo toàn vẹn dữ liệu:** Áp dụng kiến trúc **Data Lakehouse** hiện đại (lưu trữ giá rẻ trên MinIO kết hợp định dạng Delta Lake hỗ trợ ACID), thay thế cho các giải pháp Data Warehouse đắt đỏ truyền thống.
+
+---
+
 ## 🏗️ Architecture Overview
+
+![Project Architecture](images/architechture.png)
 
 ```mermaid
 flowchart LR
