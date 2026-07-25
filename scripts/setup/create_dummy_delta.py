@@ -1,3 +1,4 @@
+import os
 import sys
 import logging
 # pyrefly: ignore [missing-import]
@@ -6,8 +7,8 @@ import trino
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 TRINO_HOST = "trino"
-TRINO_PORT = 8080
-TRINO_USER = "admin"
+TRINO_PORT = int(os.getenv("TRINO_PORT", "8080"))
+TRINO_USER = os.getenv("TRINO_USER", "admin")
 TRINO_CATALOG = "minio"
 
 DDL = [

@@ -14,6 +14,7 @@ Yêu cầu:
 """
 import subprocess
 import time
+import os
 import sys
 from datetime import datetime
 
@@ -31,7 +32,7 @@ except ImportError:
 
 # ── Config ──────────────────────────────────────────────────────────────────
 TRINO_HOST = "localhost"
-TRINO_PORT = 8082          # Port expose ra máy host
+TRINO_PORT = int(os.getenv("TRINO_PORT", "8082")) # Port expose ra máy host
 AIRFLOW_BASE_URL = "http://localhost:8081"  # Port Airflow webserver trên máy host
 AIRFLOW_USER = "admin"
 AIRFLOW_PASSWORD = "admin"
@@ -53,7 +54,7 @@ def get_table_row_counts() -> dict:
     conn = trino.dbapi.connect(
         host=TRINO_HOST,
         port=TRINO_PORT,
-        user="test_script",
+        user=os.getenv("TRINO_USER", "test_script"),
         http_scheme="http",
     )
     cursor = conn.cursor()

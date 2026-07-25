@@ -11,6 +11,7 @@ Hoặc chạy trong Airflow container:
     docker exec retailflow_airflow_webserver python /opt/airflow/scripts/setup/init_trino_schemas.py
 """
 
+import os
 import sys
 import time
 import logging
@@ -26,8 +27,8 @@ log = logging.getLogger(__name__)
 
 # ── Kết nối Trino ─────────────────────────────────────────
 TRINO_HOST = "trino"          # Docker service name
-TRINO_PORT = 8080
-TRINO_USER = "admin"
+TRINO_PORT = int(os.getenv("TRINO_PORT", "8080"))
+TRINO_USER = os.getenv("TRINO_USER", "admin")
 TRINO_CATALOG = "minio"
 
 

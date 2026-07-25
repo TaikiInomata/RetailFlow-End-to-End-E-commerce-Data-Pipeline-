@@ -4,6 +4,7 @@ register_delta_tables.py
 Đăng ký các Delta Tables đã tạo từ Spark vào Trino.
 """
 
+import os
 import sys
 import logging
 # pyrefly: ignore [missing-import]
@@ -13,8 +14,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger(__name__)
 
 TRINO_HOST = "trino"
-TRINO_PORT = 8080
-TRINO_USER = "admin"
+TRINO_PORT = int(os.getenv("TRINO_PORT", "8080"))
+TRINO_USER = os.getenv("TRINO_USER", "admin")
 TRINO_CATALOG = "minio"
 
 TABLES = [

@@ -7,3 +7,4 @@ pandas>=2.0.0
 pyspark>=4.0.0
 requests>=2.32.0
 kaggle>=1.6.0
+trino>=0.332.0

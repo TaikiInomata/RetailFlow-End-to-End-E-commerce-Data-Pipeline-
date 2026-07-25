@@ -20,18 +20,27 @@ python scripts/ingestion/fetch/fetch_exchange_rates.py
 echo "=== [3.5/5] Init Database Schemas (users, orders) ==="
 python -c "from scripts.simulation.mock_backend import TransactionSimulator; s = TransactionSimulator(); s.setup_tables(); s.conn.commit(); s.cursor.close(); s.conn.close(); print('Schemas created successfully.')"
 
-echo "=== [4/5] Registering Debezium CDC Connector ==="
+echo "=== [4/6] Registering Debezium CDC Connector ==="
 curl -sf -X POST http://debezium:8083/connectors \
     -H "Content-Type: application/json" \
     -d @config/debezium/ecommerce-postgres-connector.json || echo "Postgres Connector might already exist or Debezium is not ready."
 
-echo "=== [4.5/5] Registering S3 Sink Connector ==="
+echo "=== [4.5/6] Registering S3 Sink Connector ==="
 curl -sf -X POST http://debezium:8083/connectors \
     -H "Content-Type: application/json" \
     -d @config/s3/s3-sink-connector.json || echo "S3 Sink Connector might already exist or Debezium is not ready."
 
-echo "=== [5/5] Setup MinIO Lifecycle Policy ==="
-python scripts/utils/setup_minio_lifecycle.py
+echo "=== [5/6] Init Trino Schemas ==="
+python scripts/setup/init_trino_schemas.py
+
+echo "=== [5.1/6] Create Dummy Delta Tables ==="
+python scripts/setup/create_dummy_delta.py
+
+echo "=== [5.2/6] Register Delta Tables in Trino ==="
+python scripts/setup/register_delta_tables.py
+
+echo "=== [6/6] Setup MinIO Lifecycle Policy ==="
+python scripts/setup/setup_minio_lifecycle.py
 
 echo "============================================"
 echo "   ✅ Setup Completed!                        "

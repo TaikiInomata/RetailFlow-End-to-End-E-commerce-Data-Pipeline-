@@ -250,7 +250,7 @@ services:
     container_name: retailflow_trino
     restart: unless-stopped
     ports:
-      - "8082:8080"           # Trino Web UI (tránh xung đột với Kafka UI)
+      - "${TRINO_PORT}:8080"           # Trino Web UI (tránh xung đột với Kafka UI)
     volumes:
       - ../docker/trino/etc:/etc/trino                         # Config files
       - retailflow_trino_metastore:/var/trino/metastore        # File-based Delta metastore
@@ -334,6 +334,8 @@ services:
       minio:
         condition: service_healthy
       debezium:
+        condition: service_healthy
+      trino:
         condition: service_healthy
     env_file:
       - ../.env

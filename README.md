@@ -56,38 +56,51 @@ Dự án **RetailFlow** được thiết kế như một giải pháp nền tả
 **Yêu cầu:** Docker Desktop ≥ 4.20, Git, 16GB RAM khuyến nghị
 
 ```bash
-# 1. Clone repo
+# 1. Clone repository
 git clone https://github.com/TaikiInomata/RetailFlow-End-to-End-E-commerce-Data-Pipeline-.git
 cd RetailFlow-End-to-End-E-commerce-Data-Pipeline-
 
-# 2. Tạo file cấu hình (copy từ template)
+# 2. Khởi tạo cấu hình môi trường
+# Copy các file mẫu (chứa cấu hình mặc định an toàn cho môi trường Local)
+cp .env.example .env
 cp .env.docker.example .env.docker
-# Chỉnh sửa .env nếu cần thay đổi mật khẩu (mặc định đã dùng được)
 
-# 3. Khởi động toàn bộ hệ thống
-docker compose -f docker/docker-compose.yml --profile airflow up -d
+# 3. Khởi động Core Services (Kafka, Postgres, Trino, MinIO, Spark...)
+# Bắt buộc phải truyền --env-file .env vì docker-compose.yml nằm trong thư mục con
+docker compose --env-file .env -f docker/docker-compose.yml up -d
 
-# 4. Đợi khoảng 2-3 phút để tất cả services healthy, sau đó kiểm tra:
-docker ps | grep retailflow
+# 4. Chạy Container Setup để thiết lập ban đầu
+# Đăng ký Debezium CDC, tạo Schema Trino, và Seed dữ liệu (chạy xong sẽ tự thoát)
+docker compose --env-file .env -f docker/docker-compose.yml --profile setup up setup-init
 
-# 5. Đăng ký Debezium CDC connector
-python scripts/setup/register_connector.py
+# 5. Khởi động hệ thống Airflow (Orchestration)
+docker compose --env-file .env -f docker/docker-compose.yml --profile airflow up -d
 
-# 6. Khởi tạo bảng Trino
-python scripts/setup/init_trino_schemas.py
-
-# 7. Kiểm tra kết quả
+# 6. Kiểm tra danh sách các dịch vụ đang chạy
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep retailflow
 ```
 
 **Các giao diện web sau khi khởi động:**
 
-| Service | URL | Tài khoản |
+| Service | URL | Tài khoản (Mặc định) |
 |:---|:---|:---|
-| Airflow UI | http://localhost:8083 | admin / admin |
-| MinIO Console | http://localhost:9001 | (xem .env) |
+| Airflow UI | http://localhost:8081 | admin / admin |
+| MinIO Console | http://localhost:9001 | minioadmin / minioadmin123 |
 | Kafka UI | http://localhost:8080 | - |
-| Trino UI | http://localhost:8082 | - |
+| Trino UI | http://localhost:8082 | admin |
 | Superset Dashboard | http://localhost:8088 | admin / admin |
+
+---
+
+## 🤖 Khởi động Bot giả lập dữ liệu (Simulation)
+
+Đây là một Module tùy chọn. Khi bạn cần hệ thống tự động sinh dữ liệu giao dịch giả lập (Back-end vào Postgres) và hành vi người dùng (Clickstream vào Kafka) để test luồng Pipeline, hãy chạy lệnh sau:
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml --profile simulation up simulation -d
+```
+> [!TIP]
+> Quá trình Simulation sẽ tự động dừng lại khi sinh đủ số lượng event được thiết lập tại biến `CLICKSTREAM_MAX_EVENTS` hoặc hết thời gian tối đa `SIMULATION_MAX_HOURS` trong file `.env`.
 
 ---
 

@@ -4,7 +4,7 @@ retailflow_dbt:
     dev:
       type: trino
       method: none          # Không cần auth khi chạy trong Docker network
-      user: airflow         # Trino query user (hiển thị trong Trino UI)
+      user: "{{ env_var('TRINO_USER', 'airflow') }}" # Trino query user (hiển thị trong Trino UI)
       host: trino           # Docker service name (resolved trong retailflow_network)
       port: 8080
       catalog: minio        # Catalog khai báo trong docker/trino/etc/catalog/minio.properties
@@ -16,7 +16,7 @@ retailflow_dbt:
     prod:
       type: trino
       method: none
-      user: airflow
+      user: "{{ env_var('TRINO_USER', 'airflow') }}"
       host: trino
       port: 8080
       catalog: minio
