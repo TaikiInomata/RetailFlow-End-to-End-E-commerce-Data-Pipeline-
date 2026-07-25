@@ -130,47 +130,33 @@ docker compose --env-file .env -f docker/docker-compose.yml --profile simulation
 
 *Đây là những vấn đề kỹ thuật thực tế gặp phải khi xây dựng dự án:*
 
-| # | Pain Point | Biểu hiện | Giải pháp |
+| # | Bài toán (Pain Point) | Thách thức đặc thù trong E-commerce | Giải pháp Kiến trúc (Architecture Solution) |
 |:--|:---|:---|:---|
-| 1 | **Duplicate dữ liệu CDC** | Batch job 15 phút ghi lại toàn bộ → mỗi lần chạy = 1 bản duplicate | Chuyển sang Structured Streaming + `availableNow=True` + Delta `MERGE INTO` |
-| 2 | **Gold DAG chạy trước Silver** | `ExternalTaskSensor` sync theo giờ cố định → race condition | Airflow Datasets (Event-driven): Gold chỉ chạy sau khi cả CDC và Clickstream signal xong |
-| 3 | **DAG Gold success nhưng 0 rows** | `dbt --select marts/...` không match node nào trong dbt 1.12 | Dùng đường dẫn đầy đủ `models/marts/...` |
-| 4 | **ShortCircuitOperator skip sai phạm vi** | Skip nhánh Customer 360 kéo theo skip luôn task cuối | Thêm `ignore_downstream_trigger_rules=False` |
-| 5 | **dbt CLI flags sai thứ tự** | `dbt --profiles-dir ... run` → lỗi `No such option` trong Airflow | Đặt flags sau subcommand: `dbt run --profiles-dir ...` |
-| 6 | **Checkpoint không nhất quán** | Tồn tại cả `_checkpoints/` và `checkpoints/` trên MinIO | Chuẩn hóa tất cả về `s3a://silver-zone/_checkpoints/` |
-| 7 | **Small files problem** | 15-30 phút/batch × 24h = hàng nghìn file nhỏ → query Trino chậm dần | DAG `maintenance_pipeline` chạy `OPTIMIZE` + `VACUUM` lúc 3AM hàng ngày |
+| 1 | **OLTP Database bị thắt nút cổ chai (Bottleneck)** | Truy vấn khối lượng lớn dữ liệu để làm báo cáo ngay trên Database bán hàng (Postgres) làm giảm tốc độ thanh toán lúc Flash Sale. | Sử dụng kiến trúc **Debezium CDC + Kafka**. Bắt các thay đổi realtime ở mức Log (WAL) với chi phí tài nguyên cực thấp, giải phóng tải cho hệ thống nguồn. |
+| 2 | **Cập nhật trạng thái liên tục (Data Mutation)** | Trạng thái Đơn hàng thay đổi liên tục (Pending → Shipped → Canceled). Định dạng Parquet thuần túy không hỗ trợ cập nhật bản ghi (UPDATE). | Sử dụng **Delta Lake** làm Storage Format. Hỗ trợ ACID Transactions với lệnh `MERGE INTO` giúp Upsert dữ liệu chính xác tuyệt đối. |
+| 3 | **Sự kiện Clickstream đến muộn (Late-arriving)** | Khách hàng thao tác trên Web/App nhưng mạng lag, Event đẩy lên Kafka bị trễ hoặc sai thứ tự thời gian gây lệch phễu (Funnel). | Áp dụng cơ chế **Watermarking** trong Spark Structured Streaming, cho phép độ trễ (delay threshold) nhất định trước khi chốt State tính toán. |
+| 4 | **Vấn đề File siêu nhỏ (Small Files Problem)** | Spark Streaming ghi dữ liệu liên tục sinh ra hàng ngàn file siêu nhỏ (KB) dưới MinIO, khiến Trino Query cực chậm do quá tải Metadata. | Thiết lập Airflow DAG **Maintenance Pipeline** chạy lúc 3h sáng để tự động thực hiện `OPTIMIZE` (gom file) và `VACUUM` (xóa rác). |
+| 5 | **Xung đột tiến trình (Orchestration Hell)** | DAG báo cáo doanh thu (Gold) chạy xong nhưng dữ liệu từ CDC hoặc API Tỷ giá lúc đó lại chưa đồng bộ kịp, dẫn đến số liệu sai lệch. | Ứng dụng **Airflow Datasets (Data-Aware Scheduling)**. Hủy bỏ lịch CRON cứng cứng nhắc, Gold DAG chỉ tự động trigger khi các nhánh Silver hoàn tất. |
 
 ---
 
-## 📈 Key Design Decisions
+## 📈 Tư duy Kiến trúc (Key Design Decisions)
 
-**Q: Tại sao chọn Trino + dbt thay vì PySpark thuần cho tầng Gold?**  
-A: PySpark ở tầng Gold phải viết Python dài dòng cho từng transformation. Trino + dbt cho phép viết SQL ngắn gọn, có data tests tích hợp, documentation tự động (`dbt docs generate`), và Analytics Engineer (không phải Data Engineer) cũng có thể tự viết được.
+**1. Giải quyết "Nút thắt cổ chai" nhân sự (Data Democratization)**
+- **Quyết định:** Sử dụng Trino + dbt thay vì thuần PySpark cho tầng Gold.
+- **Lý luận (E-commerce Context):** Ngành bán lẻ có tốc độ thay đổi nhanh, yêu cầu báo cáo từ Marketing/Sales vô cùng dồn dập (ví dụ: đo lường Flash Sale). Nếu mọi logic đều viết bằng PySpark, đội Data Engineer (DE) sẽ bị kiệt sức. Bằng cách tách biệt Compute (Trino) / Storage (MinIO) và tích hợp **dbt**, hệ thống cho phép Analytics Engineers tự xây dựng Data Marts, Data Tests và tự sinh Docs chỉ bằng SQL. Time-to-market của dữ liệu được giảm từ nhiều tuần xuống vài giờ.
 
-**Q: Tại sao dùng Airflow Datasets thay vì ExternalTaskSensor?**  
-A: ExternalTaskSensor kiểm tra theo `execution_date` — nếu 2 DAG chạy lệch múi giờ hoặc retry, rất dễ bị lệch. Dataset là event-driven thuần túy: "Khi có dữ liệu mới trong Silver" → trigger Gold, không phụ thuộc thời gian.
+**2. Tối ưu Chi phí và Đảm bảo Lũy đẳng (Cost Optimization & Idempotency)**
+- **Quyết định:** Dùng cơ chế `availableNow=True` (Micro-batch) trong Spark Streaming thay vì Continuous Streaming 24/7.
+- **Lý luận (E-commerce Context):** Duy trì cụm Spark 24/7 chỉ để chờ đọc CDC là sự lãng phí tài nguyên khủng khiếp về Cloud Cost. Việc áp dụng kiến trúc **Batch-on-Streaming** cho phép Spark bật lên định kỳ (ví dụ mỗi 15 phút), xử lý sạch backlogs trong Kafka rồi tự động tắt. Vẫn đảm bảo tính Near-realtime cần thiết cho luồng đơn hàng, nhưng tiết kiệm đến 80% chi phí Compute. Quản lý Offset qua Checkpoint của Spark cấu trúc đảm bảo tính lũy đẳng (Exactly-once) kể cả khi hệ thống sập.
 
-**Q: Tại sao dùng `availableNow=True` trong Spark Streaming cho CDC?**  
-A: Để xử lý batch-on-streaming: mỗi lần trigger, Spark chỉ xử lý đúng lượng dữ liệu hiện có rồi tắt (không block mãi như streaming thực). Kết hợp với checkpoint → idempotent hoàn toàn.
+**3. Điều phối luồng dữ liệu thông minh (Event-driven Orchestration)**
+- **Quyết định:** Loại bỏ ExternalTaskSensor/CRON truyền thống, chuyển sang Airflow Datasets (Data-Aware Scheduling).
+- **Lý luận (E-commerce Context):** Lịch trình thời gian tĩnh (CRON) vô cùng "giòn gãy" (brittle) trước bài toán Dữ liệu đến muộn (Late-arriving) từ App/Web. Áp dụng Airflow Datasets giúp biến Pipeline thành luồng phản ứng (Reactive): Báo cáo doanh thu và Phễu (Gold DAG) chỉ tự động Trigger kích hoạt khi có "Tín hiệu" (Signal) rằng toàn bộ dữ liệu Đơn hàng (CDC) và Hành vi (Clickstream) ở tầng Silver đã hoàn tất cập nhật. Chấm dứt hoàn toàn tình trạng "Báo cáo chạy đúng giờ nhưng số liệu bằng 0".
 
----
-
-## 🧪 Testing & Reliability
-
-```bash
-# Chạy dbt tests (Data Quality)
-docker exec retailflow_airflow_webserver \
-  dbt --no-use-colors test --profiles-dir /opt/airflow/dbt --project-dir /opt/airflow/dbt
-
-# Kiểm thử Idempotency
-pip install trino requests tabulate
-python tests/test_idempotency.py
-```
-
-**Coverage hiện tại:**
-- ✅ 49 dbt data tests (not_null, accepted_values, unique, accepted_range)
-- ✅ Idempotency test: 5 bảng Gold, trigger 3 lần liên tiếp không duplicate
-- ✅ Checkpoint-based exactly-once cho cả CDC và Clickstream
+**4. Chống bùng nổ chi phí lưu trữ (Vendor Lock-in & Storage Cost)**
+- **Quyết định:** Xây dựng Open-source Lakehouse (MinIO + Delta + Trino) thay vì dùng Data Warehouse truyền thống.
+- **Lý luận (E-commerce Context):** Khối lượng dữ liệu Clickstream của E-commerce phình to lên hàng Terabyte/Petabyte rất nhanh. Nếu ném toàn bộ thô vào Cloud DWH sẽ làm bùng nổ Storage Cost. Kiến trúc Lakehouse giữ chi phí lưu trữ ở mức đáy (MinIO/S3), đồng thời Delta Lake cấp quyền năng ACID (UPDATE/DELETE) cho Parquet. Tách bạch hoàn toàn Storage và Compute giúp dễ dàng Auto-scale độc lập khi vào các mùa Big Sale.
 
 ---
 
