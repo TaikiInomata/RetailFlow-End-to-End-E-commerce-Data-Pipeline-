@@ -1,7 +1,6 @@
 # stdlib
 import os
 import sys
-import logging
 from pathlib import Path
 
 # Gắn đường dẫn TRƯỚC tất cả local import — loại bỏ try/except ImportError anti-pattern
@@ -21,15 +20,12 @@ from pyspark.sql.utils import AnalysisException
 from spark_builder import get_spark_session
 # pyrefly: ignore [missing-import]
 from minio_client import MinioClientFactory
+# pyrefly: ignore [missing-import]
+from logger_utils import get_logger, timeit
 
-# Cấu hình Logging chuẩn Production
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger("Silver_ExchangeRate")
+logger = get_logger("Silver_ExchangeRate")
 
+@timeit(logger_name="Silver_ExchangeRate")
 def process_silver_exchange_rates():
     # 1. Khởi tạo Spark Session
     logger.info("Đang khởi tạo Spark Session...")
@@ -52,66 +48,61 @@ def process_silver_exchange_rates():
     logger.info(f"Đang đọc dữ liệu thô từ: {bronze_path}")
     
     try:
-        try:
-            # Dữ liệu từ API được lưu với indent=2 (nhiều dòng), bắt buộc phải có multiLine=True
-            df_raw = spark.read \
-                .option("multiLine", "true") \
-                .option("mode", "DROPMALFORMED") \
-                .json(bronze_path)
-        except AnalysisException as e:
-            if "Path does not exist" in str(e):
-                logger.warning("Thư mục chưa tồn tại ở Bronze Zone. Bỏ qua chạy Job.")
-                sys.exit(0)
-            raise e
-            
-        # Fix: isEmpty() hiệu quả hơn limit(1).count() — không trigger full shuffle
-        if df_raw.isEmpty():
-            logger.warning("Không có dữ liệu mới ở Bronze Zone. Bỏ qua chạy Job.")
+        # Dữ liệu từ API được lưu với indent=2 (nhiều dòng), bắt buộc phải có multiLine=True
+        df_raw = spark.read \
+            .option("multiLine", "true") \
+            .option("mode", "DROPMALFORMED") \
+            .json(bronze_path)
+    except AnalysisException as e:
+        if "Path does not exist" in str(e):
+            logger.warning("Thư mục chưa tồn tại ở Bronze Zone. Bỏ qua chạy Job.")
             sys.exit(0)
-            
-        # Fix: Dùng str(schema) thay vì _jdf (Private JVM API)
-        logger.info(f"Schema dữ liệu gốc (Bronze):\n{str(df_raw.schema)}")
+        raise e
+        
+    # Fix: isEmpty() hiệu quả hơn limit(1).count() — không trigger full shuffle
+    if df_raw.isEmpty():
+        logger.warning("Không có dữ liệu mới ở Bronze Zone. Bỏ qua chạy Job.")
+        sys.exit(0)
+        
+    # Fix: Dùng str(schema) thay vì _jdf (Private JVM API)
+    logger.info(f"Schema dữ liệu gốc (Bronze):\n{str(df_raw.schema)}")
 
-        # 3. BIẾN ĐỔI DỮ LIỆU (TRANSFORMATION)
-        # Ép kiểu cấu trúc lồng nhau (Struct) thành Map(Key-Value) để kháng lỗi khi API đổi Schema
-        map_type = MapType(StringType(), DoubleType())
+    # 3. BIẾN ĐỔI DỮ LIỆU (TRANSFORMATION)
+    # Ép kiểu cấu trúc lồng nhau (Struct) thành Map(Key-Value) để kháng lỗi khi API đổi Schema
+    map_type = MapType(StringType(), DoubleType())
+    
+    df_mapped = df_raw.withColumn(
+        "rates_map", 
+        from_json(to_json(col("rates")), map_type)
+    )
+    
+    # Flatten dữ liệu, loại bỏ ép kiểu thừa vì rates_map đã là DoubleType
+    df_silver = df_mapped.select(
+        to_date(col("_ingested_at")).alias("exchange_date"), # Dùng _ingested_at (chính xác với thực tế)
+        col("base_code").alias("base_currency"),             # Dùng base_code (chính xác với thực tế)
+        explode(col("rates_map")).alias("target_currency", "exchange_rate")
+    )
+    
+    logger.info("Biến đổi dữ liệu thành công. Chuẩn bị ghi xuống Delta Table...")
+    
+    # 4. GHI DỮ LIỆU XUỐNG MINIO (LOAD)
+    # Lũy đẳng: Bật mode "overwrite" kết hợp partitionOverwriteMode=dynamic đã set ở trên.
+    # Delta Lake sẽ tự động đối chiếu các partition có trong df_silver và chỉ ghi đè những partition đó.
+    logger.info(f"Đang ghi dữ liệu (Dynamic Overwrite) xuống: {silver_path}")
+    
+    # Fix: cache() để count() và write dùng chung plan, tránh Spark tính toán 2 lần
+    df_silver.cache()
+    record_count = df_silver.count()
+    
+    df_silver.write \
+        .format("delta") \
+        .mode("overwrite") \
+        .partitionBy("exchange_date") \
+        .save(silver_path)
+    
+    df_silver.unpersist()
         
-        df_mapped = df_raw.withColumn(
-            "rates_map", 
-            from_json(to_json(col("rates")), map_type)
-        )
-        
-        # Flatten dữ liệu, loại bỏ ép kiểu thừa vì rates_map đã là DoubleType
-        df_silver = df_mapped.select(
-            to_date(col("_ingested_at")).alias("exchange_date"), # Dùng _ingested_at (chính xác với thực tế)
-            col("base_code").alias("base_currency"),             # Dùng base_code (chính xác với thực tế)
-            explode(col("rates_map")).alias("target_currency", "exchange_rate")
-        )
-        
-        logger.info("Biến đổi dữ liệu thành công. Chuẩn bị ghi xuống Delta Table...")
-        
-        # 4. GHI DỮ LIỆU XUỐNG MINIO (LOAD)
-        # Lũy đẳng: Bật mode "overwrite" kết hợp partitionOverwriteMode=dynamic đã set ở trên.
-        # Delta Lake sẽ tự động đối chiếu các partition có trong df_silver và chỉ ghi đè những partition đó.
-        logger.info(f"Đang ghi dữ liệu (Dynamic Overwrite) xuống: {silver_path}")
-        
-        # Fix: cache() để count() và write dùng chung plan, tránh Spark tính toán 2 lần
-        df_silver.cache()
-        record_count = df_silver.count()
-        
-        df_silver.write \
-            .format("delta") \
-            .mode("overwrite") \
-            .partitionBy("exchange_date") \
-            .save(silver_path)
-        
-        df_silver.unpersist()
-            
-        logger.info(f"✅ Đã hoàn tất xử lý Tầng Silver cho Exchange Rates! Tổng số bản ghi ghi được: {record_count}")
-        
-    except Exception as e:
-        logger.error(f"❌ Có lỗi xảy ra trong quá trình xử lý Spark: {str(e)}", exc_info=True)
-        sys.exit(1)
+    logger.info(f"✅ Đã hoàn tất xử lý Tầng Silver cho Exchange Rates! Tổng số bản ghi ghi được: {record_count}")
 
 if __name__ == "__main__":
     process_silver_exchange_rates()

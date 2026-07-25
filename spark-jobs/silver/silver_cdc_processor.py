@@ -1,7 +1,6 @@
 # stdlib
 import argparse
 import sys
-import logging
 from pathlib import Path
 
 # Gắn đường dẫn TRƯỚC tất cả local import
@@ -25,14 +24,14 @@ from delta.tables import DeltaTable
 from spark_builder import get_spark_session
 # pyrefly: ignore [missing-import]
 from minio_client import MinioClientFactory
+# pyrefly: ignore [missing-import]
+from logger_utils import get_logger, timeit
 
-# Cấu hình Logger mặc định (Sẽ cập nhật tên logger động bên trong hàm)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s")
-
+@timeit(logger_name="Silver_CDC")
 def process_silver_cdc(table_name, pk_col="id"):
     # Khởi tạo Logger và Spark động theo tên bảng
     job_name = f"Silver_CDC_{table_name.capitalize()}"
-    logger = logging.getLogger(job_name)
+    logger = get_logger(job_name)
     spark = get_spark_session(job_name)
     
     # Đường dẫn tự động nội suy theo tên bảng
@@ -95,6 +94,9 @@ def process_silver_cdc(table_name, pk_col="id"):
     # 4. LOGIC UPSERT VỚI DELTA LAKE (MERGE INTO)
     logger.info(f"💾 Đang đồng bộ trạng thái xuống: {silver_path}")
     
+    # Chuẩn Senior: Cache df_latest vì nó được dùng cho cả việc Write (Merge/Save) và Count
+    df_latest.cache()
+    
     if DeltaTable.isDeltaTable(spark, silver_path):
         logger.info("🔄 Bảng Silver đã tồn tại -> Thực hiện MERGE INTO (Upsert)...")
         delta_table = DeltaTable.forPath(spark, silver_path)
@@ -121,7 +123,10 @@ def process_silver_cdc(table_name, pk_col="id"):
         df_initial = df_latest.filter(col("op") != 'd')
         df_initial.write.format("delta").mode("overwrite").save(silver_path)
         
-    logger.info(f"✅ Đã hoàn tất luồng CDC cho {table_name}! Xử lý thành công {df_latest.count()} bản ghi cập nhật.")
+    record_count = df_latest.count()
+    df_latest.unpersist()
+    
+    logger.info(f"✅ Đã hoàn tất luồng CDC cho {table_name}! Xử lý thành công {record_count} bản ghi cập nhật.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Xử lý luồng CDC từ Bronze lên Silver")

@@ -1,6 +1,5 @@
 # stdlib
 import sys
-import logging
 from pathlib import Path
 
 # Gắn đường dẫn TRƯỚC tất cả local import
@@ -22,12 +21,12 @@ from pyspark.sql.utils import AnalysisException
 from spark_builder import get_spark_session
 # pyrefly: ignore [missing-import]
 from minio_client import MinioClientFactory
+# pyrefly: ignore [missing-import]
+from logger_utils import get_logger, timeit
 
-# Cấu hình Logger
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)-8s | %(name)-30s | %(message)s")
-logger = logging.getLogger("Silver_Clickstream")
-
+@timeit(logger_name="Silver_Clickstream")
 def process_silver_clickstream():
+    logger = get_logger("Silver_Clickstream")
     spark = get_spark_session("Silver_Clickstream")
     
     # 1. Khai báo đường dẫn

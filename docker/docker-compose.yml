@@ -25,7 +25,9 @@ volumes:
 # → Dùng <<: *airflow-common để kế thừa vào từng service
 # ==========================================
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.2
+  build:
+    context: ..
+    dockerfile: docker/airflow/Dockerfile
   profiles:
     - airflow
   env_file:
@@ -45,8 +47,10 @@ x-airflow-common: &airflow-common
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
   volumes:
-    - ../dags:/opt/airflow/dags # Bind mount: thư mục DAG thật trên máy host
-    - ../scripts:/opt/airflow/scripts # Bind mount: để DAG gọi được scripts Python
+    - ../dags:/opt/airflow/dags          # Bind mount: thư mục DAG thật trên máy host
+    - ../scripts:/opt/airflow/scripts    # Bind mount: để DAG gọi được scripts Python
+    - ../spark-jobs:/opt/airflow/spark-jobs  # Bind mount: để DAG gọi được Spark scripts
+    - ../common:/opt/airflow/common      # Bind mount: để import minio_client
     - retailflow_airflow_logs:/opt/airflow/logs   # Named volume: tránh lỗi ký tự ':' trong run_id trên Windows
   depends_on:
     postgres-airflow:
