@@ -27,6 +27,7 @@
     incremental_strategy = 'append'
 ) }}
 
+{% set skip_run = false %}
 {% if is_incremental() %}
   {# Idempotent guard: bỏ qua nếu snapshot ngày hôm nay đã có #}
   {%- if execute -%}
@@ -35,8 +36,8 @@
     {%- endset -%}
     {%- set results = run_query(already_exists_query) -%}
     {%- if results.columns[0].values()[0] > 0 -%}
+      {% set skip_run = true %}
       {{ log("Snapshot ngày hôm nay đã tồn tại. Bỏ qua.", info=True) }}
-      {{ return(none) }}
     {%- endif -%}
   {%- endif -%}
 {% endif %}
@@ -108,3 +109,7 @@ SELECT
 
 FROM {{ ref('stg_users') }} u
 LEFT JOIN order_stats s ON u.user_id = s.user_id
+
+{% if skip_run %}
+WHERE 1 = 0
+{% endif %}

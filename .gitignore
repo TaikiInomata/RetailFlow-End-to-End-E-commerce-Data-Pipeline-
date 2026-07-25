@@ -238,7 +238,7 @@ data/*
 hadoop/
 
 
-# Docker environment overrides (ch?a networking config, không c?n push lên repo)
+# Docker environment overrides (ch?a networking config, khï¿½ng c?n push lï¿½n repo)
 .env.docker
 
 
@@ -253,3 +253,5 @@ scratch/
 
 # dbt user config
 dbt/.user.yml
+
+documents/

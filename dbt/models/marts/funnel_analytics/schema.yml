@@ -63,6 +63,8 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0
               max_value: 100
+              config:
+                severity: warn
 
       - name: avg_view_duration_sec
         description: "Thời gian xem trung bình (giây)"

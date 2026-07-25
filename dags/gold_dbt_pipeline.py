@@ -43,7 +43,8 @@ from airflow.datasets import Dataset
 
 # ── Constants ─────────────────────────────────────────────
 DBT_DIR = "/opt/airflow/dbt"
-DBT_CMD = f"dbt --no-use-colors --profiles-dir {DBT_DIR} --project-dir {DBT_DIR}"
+DBT_GLOBAL = "--no-use-colors"
+DBT_FLAGS = f"--profiles-dir {DBT_DIR} --project-dir {DBT_DIR}"
 
 default_args = {
     "owner": "data-engineering",
@@ -72,18 +73,18 @@ with DAG(
     # Staging là views → chạy nhanh, phải chạy trước tất cả mart
     dbt_staging = BashOperator(
         task_id="dbt_staging",
-        bash_command=f"{DBT_CMD} run --select staging",
+        bash_command=f"dbt {DBT_GLOBAL} run {DBT_FLAGS} --select staging",
     )
 
     # ── dbt: Mart 1 — Sales Analytics ─────────────────────
     with TaskGroup("sales_analytics") as tg_sales:
         dbt_sales = BashOperator(
             task_id="dbt_run_sales",
-            bash_command=f"{DBT_CMD} run --select marts/sales_analytics",
+            bash_command=f"dbt {DBT_GLOBAL} run {DBT_FLAGS} --select models/marts/sales_analytics",
         )
         dbt_test_sales = BashOperator(
             task_id="dbt_test_sales",
-            bash_command=f"{DBT_CMD} test --select marts/sales_analytics",
+            bash_command=f"dbt {DBT_GLOBAL} test {DBT_FLAGS} --select models/marts/sales_analytics",
         )
         dbt_sales >> dbt_test_sales
 
@@ -102,14 +103,15 @@ with DAG(
         check_daily_run = ShortCircuitOperator(
             task_id="check_is_daily_run",
             python_callable=_is_daily_run,
+            ignore_downstream_trigger_rules=False,
         )
         dbt_customer = BashOperator(
             task_id="dbt_run_customer",
-            bash_command=f"{DBT_CMD} run --select marts/customer_360",
+            bash_command=f"dbt {DBT_GLOBAL} run {DBT_FLAGS} --select models/marts/customer_360",
         )
         dbt_test_customer = BashOperator(
             task_id="dbt_test_customer",
-            bash_command=f"{DBT_CMD} test --select marts/customer_360",
+            bash_command=f"dbt {DBT_GLOBAL} test {DBT_FLAGS} --select models/marts/customer_360",
         )
         check_daily_run >> dbt_customer >> dbt_test_customer
 
@@ -117,18 +119,18 @@ with DAG(
     with TaskGroup("funnel_analytics") as tg_funnel:
         dbt_funnel = BashOperator(
             task_id="dbt_run_funnel",
-            bash_command=f"{DBT_CMD} run --select marts/funnel_analytics",
+            bash_command=f"dbt {DBT_GLOBAL} run {DBT_FLAGS} --select models/marts/funnel_analytics",
         )
         dbt_test_funnel = BashOperator(
             task_id="dbt_test_funnel",
-            bash_command=f"{DBT_CMD} test --select marts/funnel_analytics",
+            bash_command=f"dbt {DBT_GLOBAL} test {DBT_FLAGS} --select models/marts/funnel_analytics",
         )
         dbt_funnel >> dbt_test_funnel
 
     # ── dbt: Source Freshness Check ────────────────────────
     dbt_source_freshness = BashOperator(
         task_id="dbt_source_freshness",
-        bash_command=f"{DBT_CMD} source freshness",
+        bash_command=f"dbt {DBT_GLOBAL} source freshness {DBT_FLAGS}",
         # Không fail DAG nếu freshness warning (chỉ log)
         trigger_rule="all_done",
     )

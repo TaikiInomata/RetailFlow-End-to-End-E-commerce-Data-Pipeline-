@@ -12,7 +12,7 @@
 {{ config(
     materialized = 'incremental',
     incremental_strategy = 'delete+insert',
-    unique_key = ['event_date', 'item_id']
+    unique_key = ['event_date', 'product_id']
 ) }}
 
 WITH product_events AS (
