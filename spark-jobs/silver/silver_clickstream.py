@@ -65,7 +65,7 @@ def process_silver_clickstream():
         StructField("quantity", IntegerType(), True),
         StructField("cart_total", FloatType(), True),
         StructField("step", StringType(), True),
-        StructField("pseudo_order_id", StringType(), True),
+        StructField("real_order_id", IntegerType(), True),  # Real FK sang bảng orders (thay thế pseudo uuid)
         StructField("purchase_amount", FloatType(), True)
     ])
     

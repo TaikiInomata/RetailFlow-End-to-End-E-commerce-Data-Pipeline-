@@ -117,6 +117,7 @@ def build_event_payload(
     device: str,
     override_product_id: str | None = None,
     override_base_price: float | None = None,
+    override_order_id: int | None = None,  # Real order_id từ PostgreSQL (thay uuid giả)
 ) -> dict:
     """
     Xây dựng payload event với các trường phù hợp theo từng event_type.
@@ -201,10 +202,13 @@ def build_event_payload(
         payload["page_url"]   = f"{base_url}/checkout"
         payload["cart_total"] = cart_total
         payload["step"]       = step
-        # pseudo_order_id: Gold layer dùng để fuzzy join với CDC orders
-        # (match trên user_id + product_id + timestamp window ±60s)
+        # real_order_id: lấy từ catalog (COMPLETED orders trong PostgreSQL)
+        # Thay thế hoàn toàn pseudo_order_id (uuid giả) — giờ JOIN được chính xác với bảng orders
+        # Fallback về None nếu chưa có đơn COMPLETED nào trong DB (hệ thống mới khởi động)
         if step == "confirmation":
-            payload["pseudo_order_id"]  = str(uuid.uuid4())
+            real_order_id = override_order_id  # Inject từ caller (vòng lặp chính)
+            if real_order_id is not None:
+                payload["real_order_id"]  = real_order_id
             payload["purchase_amount"]  = cart_total
 
     return payload
@@ -314,10 +318,17 @@ def run_bot():
             else:
                 product_id, base_price = (None, None)  # scroll/click/search không có product
 
+            # Lấy real_order_id cho checkout → thay thế uuid giả hoàn toàn
+            # Chỉ gọi khi cần thiết (ở step confirmation) — catalog có cache sẵn, chi phí = O(1)
+            real_order_id = None
+            if event_type == "checkout" and catalog:
+                real_order_id = catalog.pick_order_id()  # None nếu DB chưa có COMPLETED order
+
             event = build_event_payload(
                 user_id, session_id, event_type, device,
                 override_product_id=product_id,
                 override_base_price=base_price,
+                override_order_id=real_order_id,
             )
 
             producer.produce(

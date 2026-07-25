@@ -33,6 +33,22 @@ PAYMENT_WEIGHTS = [20,            20,              22,     18,      5,        15
 # credit_card 20% | bank_transfer 20% | MoMo 22% (ví điện tử #1 VN)
 # VNPay 18% | PayPal 5% (quốc tế) | COD 15% (thanh toán khi nhận hàng)
 
+# Đa tiền tệ — phân phối dựa trên thị trường E-commerce SEA 2024
+# VND: khách VN nội địa (Shopee, Tiki) | USD: quốc tế / checkout bằng card
+# SGD: khách Singapore trên nền tảng xuyên biên giới | EUR: khách châu Âu qua PayPal
+# JPY: một phần nhỏ từ Nhật (hàng điện tử, đồ thủ công)
+CURRENCIES        = ["USD", "VND",  "SGD", "EUR", "JPY"]
+CURRENCY_WEIGHTS  = [45,    35,     10,    6,     4]
+# Tỷ lệ quy đổi tương đối sang USD (dùng để tính total_amount chuẩn hóa trong Gold Layer)
+# ⚠ Chú ý: Exchange Rate thực sự sẽ được lấy từ bảng silver/exchange_rates trong Gold Job
+CURRENCY_APPROX_RATES = {
+    "USD": 1.0,
+    "VND": 1 / 25_000,   # 1 VND ≈ 0.00004 USD
+    "SGD": 0.74,         # 1 SGD ≈ 0.74 USD
+    "EUR": 1.08,         # 1 EUR ≈ 1.08 USD
+    "JPY": 0.0067,       # 1 JPY ≈ 0.0067 USD
+}
+
 # Số lượng sản phẩm trong 1 đơn hàng (lệch phải mạnh — Euromonitor B2C 2023)
 QUANTITY_VALUES  = [1,   2,   3,   4,   5]
 QUANTITY_WEIGHTS = [52,  25,  12,  7,   4]  # avg ≈1.86 items/order
@@ -220,10 +236,19 @@ class TransactionSimulator:
                 # ── 2. TẠO ĐƠN HÀNG (INSERT — mặc định PENDING) ─────────────
                 # product_id lấy từ SharedCatalog → trỏ vào products table thực
                 product_id, base_price = self.catalog.pick_product()
-                unit_price     = round(base_price * random.uniform(0.8, 1.2), 2)   # ±20% variation
+
+                # Chọn đơn vị tiền tệ theo phân phối thực tế thị trường SEA
+                currency = random.choices(CURRENCIES, weights=CURRENCY_WEIGHTS, k=1)[0]
+
+                # unit_price được tính bằng đơn vị tiền tệ đã chọn
+                # VD: nếu currency=VND, base_price (USD) được scale lên theo tỷ giá xấp xỉ
+                approx_rate = CURRENCY_APPROX_RATES.get(currency, 1.0)
+                unit_price_in_currency = round(
+                    base_price / approx_rate * random.uniform(0.9, 1.1), 2
+                )
                 # Lệch phải mạnh: 52% khách hàng chỉ mua 1 món (Euromonitor B2C)
                 quantity       = random.choices(QUANTITY_VALUES, weights=QUANTITY_WEIGHTS, k=1)[0]
-                total_amount   = round(unit_price * quantity, 2)
+                total_amount   = round(unit_price_in_currency * quantity, 2)
                 # Weighted theo thị phần thực tế VN: MoMo 22%, bank_transfer 20%, card 20%...
                 payment_method = random.choices(PAYMENT_METHODS, weights=PAYMENT_WEIGHTS, k=1)[0]
 
@@ -233,14 +258,16 @@ class TransactionSimulator:
                         currency, payment_method, status)
                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                        RETURNING id;""",
-                    (user_id, product_id, quantity, unit_price, total_amount,
+                    (user_id, product_id, quantity, unit_price_in_currency, total_amount,
                      total_amount,  # amount = total_amount (legacy compat)
-                     'USD', payment_method, 'PENDING')
+                     currency, payment_method, 'PENDING')
                 )
                 order_id = self.cursor.fetchone()[0]
                 active_orders.add(order_id)
-                logger.info("[INSERT] Đơn hàng #%d | User '%s' | Product %s | x%d | $%.2f | %s",
-                            order_id, name, product_id, quantity, total_amount, payment_method)
+                logger.info(
+                    "[INSERT] Đơn hàng #%d | User '%s' | Product %s | x%d | %.2f %s | %s",
+                    order_id, name, product_id, quantity, total_amount, currency, payment_method
+                )
 
                 # ── 3. CHUYỂN TRẠNG THÁI (UPDATE — xác suất 30%) ────────────
                 if random.random() < 0.3 and len(active_orders) > 1:

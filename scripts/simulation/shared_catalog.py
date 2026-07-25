@@ -56,6 +56,7 @@ class SharedCatalog:
 
         self._products: list[tuple[str, float]] = []
         self._max_user_id: int                  = 1000      # fallback
+        self._order_ids: list[int]              = []        # Real COMPLETED order IDs
         self._last_refresh: float               = 0.0
 
         self.refresh()
@@ -69,6 +70,17 @@ class SharedCatalog:
         """
         self._maybe_refresh()
         return random.choice(self._products)
+
+    def pick_order_id(self) -> Optional[int]:
+        """
+        Lấy ngẫu nhiên 1 real order_id (status=COMPLETED) từ cache.
+        Dùng cho checkout event trong Clickstream Bot để thay thế pseudo_order_id.
+        Returns: order_id (int) hoặc None nếu chưa có order nào trong DB.
+        """
+        self._maybe_refresh()
+        if not self._order_ids:
+            return None
+        return random.choice(self._order_ids)
 
     def max_user_id(self) -> int:
         """
@@ -108,10 +120,20 @@ class SharedCatalog:
                 cur.execute("SELECT COALESCE(MAX(id), 1000) FROM users;")
                 self._max_user_id = cur.fetchone()[0]
 
+                # ── Orders sample: chỉ lấy COMPLETED orders (đơn thật đã xong) ─
+                cur.execute("""
+                    SELECT id FROM orders
+                    WHERE  status = 'COMPLETED'
+                    ORDER  BY RANDOM()
+                    LIMIT  1000;
+                """)
+                order_rows = cur.fetchall()
+                self._order_ids = [r[0] for r in order_rows]
+
             self._last_refresh = time.time()
             logger.info(
-                "[Catalog] Refreshed: %d products | max user_id: %d",
-                len(self._products), self._max_user_id,
+                "[Catalog] Refreshed: %d products | max user_id: %d | %d completed orders",
+                len(self._products), self._max_user_id, len(self._order_ids),
             )
 
         except Exception as exc:
