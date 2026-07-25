@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: gold_customer_snapshot
+    description: >
+      Snapshot phân khúc khách hàng theo ngày (SCD Type 2 - daily append).
+      Lưu lịch sử RFM segment, CLV, và hành vi mua hàng.
+      Cho phép phân tích trend: "Khách VIP nào rớt 'At Risk' trong tháng này?"
+      Refresh: 1 lần/ngày lúc 2AM. SLA: cuối ngày.
+    columns:
+      - name: snapshot_date
+        description: "Ngày chụp ảnh snapshot (YYYY-MM-DD)"
+        tests: [not_null]
+
+      - name: user_id
+        description: "ID người dùng"
+        tests: [not_null]
+
+      - name: customer_segment
+        description: "Phân khúc RFM: Champions/Loyal/Promising/At Risk/New/Lost/Never Bought"
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                - 'Champions'
+                - 'Loyal'
+                - 'Promising'
+                - 'At Risk'
+                - 'New'
+                - 'Lost'
+                - 'Never Bought'
+
+      - name: total_revenue_usd
+        description: "Tổng doanh thu tích lũy quy đổi USD"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: total_orders
+        description: "Tổng số đơn hàng COMPLETED"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: avg_order_value_usd
+        description: "AOV trung bình tích lũy quy đổi USD"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0

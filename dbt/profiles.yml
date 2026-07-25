@@ -1,0 +1,25 @@
+retailflow_dbt:
+  target: dev
+  outputs:
+    dev:
+      type: trino
+      method: none          # Không cần auth khi chạy trong Docker network
+      user: airflow         # Trino query user (hiển thị trong Trino UI)
+      host: trino           # Docker service name (resolved trong retailflow_network)
+      port: 8080
+      catalog: minio        # Catalog khai báo trong docker/trino/etc/catalog/minio.properties
+      schema: gold          # Schema mặc định khi chạy dbt run
+      threads: 1            # BẮT BUỘC = 1 — File-based metastore không hỗ trợ concurrent writes
+      http_scheme: http
+
+    # Target prod để dùng khi cần verify (vẫn cùng cluster, khác schema)
+    prod:
+      type: trino
+      method: none
+      user: airflow
+      host: trino
+      port: 8080
+      catalog: minio
+      schema: gold_prod
+      threads: 1
+      http_scheme: http

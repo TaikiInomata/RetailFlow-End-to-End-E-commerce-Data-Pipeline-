@@ -1,0 +1,58 @@
+version: 2
+
+sources:
+  - name: silver
+    description: "Silver Zone — Cleaned & deduplicated data trên Delta Lake / MinIO"
+    database: minio          # Trino catalog
+    schema: silver           # Trino schema (tạo bằng init_trino_schemas.py)
+
+    tables:
+      - name: orders
+        description: "Đơn hàng sau khi xử lý CDC từ Debezium (Delta Lake)"
+        columns:
+          - name: id
+            tests: [not_null, unique]
+          - name: user_id
+            tests: [not_null]
+          - name: product_id
+            tests: [not_null]
+          - name: status
+            tests:
+              - accepted_values:
+                  values: ['PENDING', 'COMPLETED', 'CANCELLED']
+          - name: currency
+            tests:
+              - accepted_values:
+                  values: ['USD', 'VND', 'SGD', 'EUR', 'JPY']
+
+      - name: products
+        description: "Danh sách sản phẩm sau khi xử lý CDC (Delta Lake)"
+        columns:
+          - name: product_id
+            tests: [not_null, unique]
+
+      - name: users
+        description: "Danh sách người dùng sau khi xử lý CDC (Delta Lake)"
+        columns:
+          - name: id
+            tests: [not_null, unique]
+
+      - name: exchange_rates
+        description: "Tỷ giá hối đoái hàng ngày — có thể có NULL nếu API lỗi"
+        columns:
+          - name: exchange_date
+            tests: [not_null]
+          - name: base_currency
+            tests: [not_null]
+          - name: target_currency
+            tests: [not_null]
+
+      - name: clickstream
+        description: "Clickstream events từ Kafka (Spark Streaming → Delta Lake)"
+        columns:
+          - name: event_id
+            tests: [not_null]
+          - name: user_id
+            tests: [not_null]
+          - name: session_id
+            tests: [not_null]

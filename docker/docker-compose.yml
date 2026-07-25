@@ -19,6 +19,8 @@ volumes:
     driver: local
   retailflow_airflow_logs:            # Named volume cho Airflow logs (tránh lỗi ký tự ':' trên Windows)
     driver: local
+  retailflow_trino_metastore:         # File-based metastore cho Trino Delta Lake catalog
+    driver: local
 
 # ==========================================
 # YAML ANCHOR: Cấu hình chung cho cụm Airflow
@@ -41,7 +43,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres-airflow:5432/${AIRFLOW_DB_NAME}
     AIRFLOW__CORE__LOAD_EXAMPLES: "False"
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
-    _PIP_ADDITIONAL_REQUIREMENTS: requests boto3
+    _PIP_ADDITIONAL_REQUIREMENTS: requests boto3 dbt-trino
     # MinIO credentials — boto3 dùng AWS_* vars để authenticate với bất kỳ S3-compatible storage
     # MINIO_ENDPOINT và MINIO_ROOT_USER/PASSWORD đã được load từ .env + .env.docker ở trên
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
@@ -51,6 +53,7 @@ x-airflow-common: &airflow-common
     - ../scripts:/opt/airflow/scripts    # Bind mount: để DAG gọi được scripts Python
     - ../spark-jobs:/opt/airflow/spark-jobs  # Bind mount: để DAG gọi được Spark scripts
     - ../common:/opt/airflow/common      # Bind mount: để import minio_client
+    - ../dbt:/opt/airflow/dbt            # Bind mount: để DAG gọi dbt run/test
     - retailflow_airflow_logs:/opt/airflow/logs   # Named volume: tránh lỗi ký tự ':' trong run_id trên Windows
   depends_on:
     postgres-airflow:
@@ -236,6 +239,35 @@ services:
       retries: 5
       start_period: 15s
   # =========================================
+  # TRINO — Query Engine (Gold Layer Analytics)
+  # Truy vấn Delta Lake trên MinIO bằng SQL chuẩn
+  # Web UI: http://localhost:8082
+  # =========================================
+  trino:
+    image: trinodb/trino:435
+    container_name: retailflow_trino
+    restart: unless-stopped
+    ports:
+      - "8082:8080"           # Trino Web UI (tránh xung đột với Kafka UI)
+    volumes:
+      - ../docker/trino/etc:/etc/trino                         # Config files
+      - retailflow_trino_metastore:/var/trino/metastore        # File-based Delta metastore
+    env_file:
+      - ../.env
+      - ../.env.docker
+    networks:
+      - retailflow_network
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  # =========================================
   # SPARK STREAMING — Bronze Layer (Always-On)
   # Đọc Clickstream từ Kafka → ghi Parquet xuống MinIO liên tục
   # =========================================
@@ -329,6 +361,31 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - retailflow_network
+
+  hive-metastore:
+    build:
+      context: ..
+      dockerfile: docker/hive-metastore/Dockerfile
+    container_name: retailflow_hive_metastore
+    restart: unless-stopped
+    ports:
+      - "9083:9083"
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - ../.env
+      - ../.env.docker
+    environment:
+      DB_USER: ${AIRFLOW_DB_USER}
+      DB_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     networks:
       - retailflow_network
 

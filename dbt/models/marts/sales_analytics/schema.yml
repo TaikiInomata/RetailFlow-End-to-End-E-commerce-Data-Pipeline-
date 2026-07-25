@@ -1,0 +1,75 @@
+version: 2
+
+models:
+  - name: gold_daily_sales_summary
+    description: >
+      Doanh thu hàng ngày theo danh mục, brand, phương thức thanh toán và tiền tệ.
+      Đã quy đổi về USD. Bao gồm cả đơn COMPLETED, CANCELLED và PENDING.
+      Refresh: hourly (Airflow). SLA: ≤ 1 giờ.
+    columns:
+      - name: order_date
+        description: "Ngày của đơn hàng (YYYY-MM-DD)"
+        tests: [not_null]
+
+      - name: category
+        description: "Danh mục sản phẩm"
+        tests: [not_null]
+
+      - name: total_revenue_usd
+        description: "Tổng doanh thu (COMPLETED orders only) đã quy đổi USD"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: cancellation_rate_pct
+        description: "Tỷ lệ hủy đơn (%)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+      - name: pending_revenue_usd
+        description: "Doanh thu tiềm năng (đơn PENDING) — dùng để dự báo GMV cuối ngày"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: avg_order_value_usd
+        description: "AOV (Average Order Value) tính bằng USD"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+  - name: gold_product_performance
+    description: >
+      Hiệu suất bán hàng theo sản phẩm, tổng hợp theo tuần.
+      Bao gồm ranking doanh thu và số lượng trong tuần, flag Top 10%.
+      Refresh: mỗi 4 giờ. SLA: ≤ 4 giờ.
+    columns:
+      - name: week_start
+        description: "Ngày đầu tuần (Monday)"
+        tests: [not_null]
+
+      - name: product_id
+        description: "ID sản phẩm"
+        tests: [not_null]
+
+      - name: revenue_usd
+        description: "Tổng doanh thu tuần quy đổi USD"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: units_sold
+        description: "Tổng số lượng bán trong tuần"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+
+      - name: revenue_rank_in_week
+        description: "Xếp hạng doanh thu trong tuần (1 = cao nhất)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1

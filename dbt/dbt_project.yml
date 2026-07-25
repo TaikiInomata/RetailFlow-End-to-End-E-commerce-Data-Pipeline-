@@ -1,0 +1,43 @@
+name: retailflow_dbt
+version: '1.0.0'
+config-version: 2
+
+profile: 'retailflow_dbt'
+
+# Thư mục chứa models
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+
+# Thư mục output
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# ── Materialization mặc định theo folder ──────────────────
+models:
+  retailflow_dbt:
+    # staging: luôn là view (nhẹ, không tốn storage, luôn fresh)
+    staging:
+      +materialized: view
+      +schema: silver_views       # Trino schema: minio.silver_views
+    # marts: table hoặc incremental (xem từng file)
+    marts:
+      +materialized: table
+      sales_analytics:
+        +schema: gold
+      customer_360:
+        +schema: gold
+      funnel_analytics:
+        +schema: gold
+
+# ── Query timeout ──────────────────────────────────────────
+# Trino timeout mặc định: 10 phút
+quoting:
+  database: false
+  schema: false
+  identifier: false

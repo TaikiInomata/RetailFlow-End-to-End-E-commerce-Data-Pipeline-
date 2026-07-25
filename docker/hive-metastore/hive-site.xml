@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+    <!-- Metastore Database Configuration -->
+    <property>
+        <name>javax.jdo.option.ConnectionURL</name>
+        <value>jdbc:postgresql://postgres-airflow:5432/metastore</value>
+    </property>
+    <property>
+        <name>javax.jdo.option.ConnectionDriverName</name>
+        <value>org.postgresql.Driver</value>
+    </property>
+    <property>
+        <name>javax.jdo.option.ConnectionUserName</name>
+        <value>${DB_USER}</value>
+    </property>
+    <property>
+        <name>javax.jdo.option.ConnectionPassword</name>
+        <value>${DB_PASSWORD}</value>
+    </property>
+
+    <!-- Metastore General Properties -->
+    <property>
+        <name>hive.metastore.uris</name>
+        <value>thrift://0.0.0.0:9083</value>
+    </property>
+    <property>
+        <name>hive.metastore.warehouse.dir</name>
+        <value>s3a://gold-zone/warehouse/</value>
+    </property>
+    
+    <!-- Disable Metastore authorization checks for simplicity -->
+    <property>
+        <name>hive.metastore.event.db.notification.api.auth</name>
+        <value>false</value>
+    </property>
+
+    <!-- MinIO (S3) Configuration for Delta Lake Logs -->
+    <property>
+        <name>fs.s3a.endpoint</name>
+        <value>${MINIO_ENDPOINT}</value>
+    </property>
+    <property>
+        <name>fs.s3a.access.key</name>
+        <value>${MINIO_ROOT_USER}</value>
+    </property>
+    <property>
+        <name>fs.s3a.secret.key</name>
+        <value>${MINIO_ROOT_PASSWORD}</value>
+    </property>
+    <property>
+        <name>fs.s3a.path.style.access</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>fs.s3a.connection.ssl.enabled</name>
+        <value>false</value>
+    </property>
+    <property>
+        <name>fs.s3a.impl</name>
+        <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+    </property>
+</configuration>

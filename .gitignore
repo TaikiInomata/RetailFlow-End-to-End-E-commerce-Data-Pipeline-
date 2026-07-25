@@ -241,3 +241,15 @@ hadoop/
 # Docker environment overrides (ch?a networking config, không c?n push lên repo)
 .env.docker
 
+
+# dbt ignores
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+dbt/package-lock.yml
+
+# Scratch (temporary script dir)
+scratch/
+
+# dbt user config
+dbt/.user.yml

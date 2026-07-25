@@ -1,0 +1,71 @@
+version: 2
+
+models:
+  - name: gold_daily_funnel
+    description: >
+      Conversion funnel hàng ngày theo device và kênh traffic.
+      Bao gồm CVR từng bước (view→cart→checkout→purchase), bounce rate, engagement.
+      Refresh: sau mỗi Clickstream batch (~30 phút). SLA: ≤ 30 phút.
+    columns:
+      - name: event_date
+        description: "Ngày phân tích funnel"
+        tests: [not_null]
+
+      - name: device
+        description: "Thiết bị: mobile/desktop/tablet"
+        tests: [not_null]
+
+      - name: referrer_category
+        description: "Nguồn traffic: organic_search/social/email/direct/other"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['organic_search', 'social', 'email', 'direct', 'other']
+
+      - name: true_purchase_rate
+        description: "Tỷ lệ chuyển đổi thực tế: view → completed purchase (%)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+      - name: bounce_rate_pct
+        description: "Tỷ lệ bounce: session chỉ có 1 event (%)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+      - name: view_to_cart_rate
+        description: "Tỷ lệ view → add to cart (%)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+  - name: gold_product_engagement
+    description: >
+      Engagement metrics theo sản phẩm và ngày.
+      Phân tích gap view→cart để phát hiện sản phẩm cần cải thiện listing.
+      Refresh: sau mỗi Clickstream batch (~1 giờ). SLA: ≤ 1 giờ.
+    columns:
+      - name: event_date
+        description: "Ngày phân tích"
+        tests: [not_null]
+
+      - name: product_id
+        description: "ID sản phẩm"
+        tests: [not_null]
+
+      - name: view_to_cart_rate
+        description: "Tỷ lệ chuyển đổi view → add to cart (%)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
+
+      - name: avg_view_duration_sec
+        description: "Thời gian xem trung bình (giây)"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
