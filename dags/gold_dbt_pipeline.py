@@ -38,6 +38,8 @@ from airflow.operators. bash import BashOperator
 from airflow.sensors.external_task import ExternalTaskSensor
 # pyrefly: ignore [missing-import]
 from airflow.utils.task_group import TaskGroup
+# pyrefly: ignore [missing-import]
+from airflow.datasets import Dataset
 
 # ── Constants ─────────────────────────────────────────────
 DBT_DIR = "/opt/airflow/dbt"
@@ -51,37 +53,20 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
 }
 
+dataset_cdc = Dataset("s3://silver-zone/cdc")
+dataset_clickstream = Dataset("s3://silver-zone/clickstream")
+
 with DAG(
     dag_id="gold_dbt_pipeline",
     description="Gold Layer — dbt models via Trino (Sales + Customer + Funnel)",
     default_args=default_args,
-    # Chạy mỗi giờ (sales và funnel theo SLA ≤ 1 giờ)
-    schedule_interval="0 * * * *",
+    # Chạy tự động ngay khi CẢ HAI luồng CDC và Clickstream hoàn thành cập nhật Silver
+    schedule=[dataset_cdc, dataset_clickstream],
     start_date=datetime(2025, 1, 1),
     catchup=False,
     tags=["gold", "dbt", "trino"],
     max_active_runs=1,  # Tránh concurrent runs xung đột File-based metastore
 ) as dag:
-
-    # ── Sensor: Đợi CDC pipeline hoàn tất ─────────────────
-    sensor_cdc_done = ExternalTaskSensor(
-        task_id="sensor_cdc_done",
-        external_dag_id="frequent_cdc_pipeline",
-        external_task_id="spark_silver_cdc",
-        timeout=3600,
-        poke_interval=60,
-        mode="reschedule",  # Không block worker thread
-    )
-
-    # ── Sensor: Đợi Clickstream batch hoàn tất ────────────
-    sensor_clickstream_done = ExternalTaskSensor(
-        task_id="sensor_clickstream_done",
-        external_dag_id="frequent_clickstream_pipeline",
-        external_task_id="spark_silver_clickstream",
-        timeout=3600,
-        poke_interval=60,
-        mode="reschedule",
-    )
 
     # ── dbt: Staging Layer ─────────────────────────────────
     # Staging là views → chạy nhanh, phải chạy trước tất cả mart
@@ -149,11 +134,8 @@ with DAG(
     )
 
     # ── Task Dependencies ──────────────────────────────────
-    # CDC pipeline → staging → sales + customer
-    sensor_cdc_done >> dbt_staging >> [tg_sales, tg_customer]
-
-    # Clickstream pipeline → staging (đã chạy) → funnel
-    sensor_clickstream_done >> dbt_staging >> tg_funnel
+    # Trigger by Datasets -> run staging directly -> split to marts
+    dbt_staging >> [tg_sales, tg_customer, tg_funnel]
 
     # Source freshness chạy sau tất cả mart
     [tg_sales, tg_customer, tg_funnel] >> dbt_source_freshness

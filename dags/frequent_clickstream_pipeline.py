@@ -25,6 +25,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 # pyrefly: ignore [missing-import]
 from airflow.operators.empty import EmptyOperator
+from airflow.datasets import Dataset
 
 from utils.callbacks import on_failure_callback
 from utils.spark_config import spark_cmd, SPARK_POOL
@@ -56,6 +57,8 @@ default_args = {
     "on_failure_callback": on_failure_callback,
 }
 
+dataset_clickstream = Dataset("s3://silver-zone/clickstream")
+
 with DAG(
     dag_id="frequent_clickstream_pipeline",
     description="Bronze Parquet → Silver Delta: Clickstream — mỗi 30 phút",
@@ -73,9 +76,5 @@ with DAG(
         task_id="silver_clickstream",
         bash_command=spark_cmd("silver/silver_clickstream.py"),
         pool=SPARK_POOL,
+        outlets=[dataset_clickstream]
     )
-
-    # Gold Placeholder
-    gold_traffic = EmptyOperator(task_id="gold_traffic_analytics__pending")
-
-    silver_clickstream >> gold_traffic

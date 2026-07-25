@@ -25,6 +25,7 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 # pyrefly: ignore [missing-import]
 from airflow.operators.empty import EmptyOperator
+from airflow.datasets import Dataset
 
 from utils.callbacks import on_failure_callback
 from utils.spark_config import spark_cmd, SPARK_POOL
@@ -64,6 +65,8 @@ CDC_TABLES = [
     ("users",    "id"),
 ]
 
+dataset_cdc = Dataset("s3://silver-zone/cdc")
+
 with DAG(
     dag_id="frequent_cdc_pipeline",
     description="Bronze (Debezium) → Silver (Delta Upsert): orders, products, users — mỗi 15 phút",
@@ -94,11 +97,8 @@ with DAG(
     wait_all_silver = EmptyOperator(
         task_id="wait_for_all_silver",
         trigger_rule="all_success",  # Chỉ thành công nếu CẢ 3 task trên đều success
+        outlets=[dataset_cdc]
     )
 
-    # Gold Placeholders — sẽ thay bằng BashOperator(spark_cmd(...)) sau khi có Gold scripts
-    gold_sales = EmptyOperator(task_id="gold_sales_metrics__pending")
-    gold_customer = EmptyOperator(task_id="gold_customer_360__pending")
-
-    # Dependency: [orders, products, users] → wait_all → [gold_sales, gold_customer]
-    cdc_tasks >> wait_all_silver >> [gold_sales, gold_customer]
+    # Dependency: [orders, products, users] → wait_all
+    cdc_tasks >> wait_all_silver
