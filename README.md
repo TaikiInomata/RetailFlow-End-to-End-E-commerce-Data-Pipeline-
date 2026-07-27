@@ -64,6 +64,8 @@ cd RetailFlow-End-to-End-E-commerce-Data-Pipeline-
 # Copy các file mẫu (chứa cấu hình mặc định an toàn cho môi trường Local)
 cp .env.example .env
 cp .env.docker.example .env.docker
+# LƯU Ý: Mở file .env và điền KAGGLE_USERNAME / KAGGLE_KEY của bạn vào 
+# để tiến trình Setup có thể tải được 4.3GB dữ liệu.
 
 # 3. Khởi động Core Services (Kafka, Postgres, Trino, MinIO, Spark...)
 # Bắt buộc phải truyền --env-file .env vì docker-compose.yml nằm trong thư mục con

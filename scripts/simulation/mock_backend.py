@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / '.env')
 
-from shared_catalog import SharedCatalog 
+from scripts.simulation.shared_catalog import SharedCatalog 
 
 logging.basicConfig(
     level=logging.INFO,

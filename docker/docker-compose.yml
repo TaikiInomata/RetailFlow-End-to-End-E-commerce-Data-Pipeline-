@@ -337,6 +337,8 @@ services:
         condition: service_healthy
       trino:
         condition: service_healthy
+      hive-metastore:
+        condition: service_started
     env_file:
       - ../.env
       - ../.env.docker
