@@ -26,6 +26,8 @@ from spark_builder import get_spark_session
 from minio_client import MinioClientFactory
 # pyrefly: ignore [missing-import]
 from logger_utils import get_logger, timeit
+# pyrefly: ignore [missing-import]
+from debezium_schemas import get_debezium_schema
 
 @timeit(logger_name="Silver_CDC")
 def process_silver_cdc(table_name, pk_col="id"):
@@ -42,13 +44,18 @@ def process_silver_cdc(table_name, pk_col="id"):
     MinioClientFactory().ensure_bucket_exists("silver-zone")
             
     logger.info(f"📥 Đang đọc dữ liệu CDC thô cho bảng '{table_name}' từ: {bronze_path}")
-    
-    # Bật tính năng tự suy luận schema cho Streaming JSON
-    spark.conf.set("spark.sql.streaming.schemaInference", "true")
-    
+
+    # Lấy schema tường minh từ registry (bắt buộc với glob path + Structured Streaming)
+    debezium_schema = get_debezium_schema(table_name)
+
     # 1. ĐỌC DỮ LIỆU & BẮT LỖI AN TOÀN (STREAMING)
     try:
-        df_raw = spark.readStream.option("mode", "DROPMALFORMED").json(bronze_path)
+        df_raw = (
+            spark.readStream
+            .schema(debezium_schema)
+            .option("mode", "DROPMALFORMED")
+            .json(bronze_path)
+        )
     except AnalysisException as e:
         if "Path does not exist" in str(e):
             logger.warning("Thư mục chưa tồn tại ở Bronze Zone. Bỏ qua chạy Job.")
