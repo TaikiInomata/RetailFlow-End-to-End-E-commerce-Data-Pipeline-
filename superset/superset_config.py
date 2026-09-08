@@ -33,6 +33,9 @@ CACHE_CONFIG = {
 UPLOAD_FOLDER = "/app/superset_home/uploads/"
 IMG_UPLOAD_FOLDER = "/app/superset_home/images/"
 
+# Đổi tên session cookie → tránh đụng với Airflow (cùng dùng tên "session" mặc định trên localhost)
+SESSION_COOKIE_NAME = "superset_session"
+
 # Cho phép kết nối đến Trino trong Docker network (không yêu cầu SSL)
 PREVENT_UNSAFE_DB_CONNECTIONS = False
 
