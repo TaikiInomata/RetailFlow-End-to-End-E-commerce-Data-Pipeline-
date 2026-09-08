@@ -58,33 +58,39 @@ def _debezium_envelope(payload_schema: StructType) -> StructType:
 # ---------------------------------------------------------------------------
 
 _PRODUCTS_PAYLOAD = StructType([
-    StructField("product_id",   IntegerType(),      nullable=True),
-    StructField("name",         StringType(),       nullable=True),
-    StructField("description",  StringType(),       nullable=True),
-    StructField("price",        DecimalType(10, 2), nullable=True),
-    StructField("stock",        IntegerType(),      nullable=True),
-    StructField("category_id",  IntegerType(),      nullable=True),
-    StructField("created_at",   LongType(),         nullable=True),  # micro-epoch từ Debezium
-    StructField("updated_at",   LongType(),         nullable=True),
+    StructField("product_id",    StringType(),       nullable=True),
+    StructField("category_id",   StringType(),       nullable=True),
+    StructField("category_code", StringType(),       nullable=True),
+    StructField("category_fill", StringType(),       nullable=True),
+    StructField("brand",         StringType(),       nullable=True),
+    StructField("avg_price",     DecimalType(10, 2), nullable=True),
+    StructField("created_at",    StringType(),       nullable=True),
 ])
 
 _ORDERS_PAYLOAD = StructType([
-    StructField("order_id",     IntegerType(),      nullable=True),
-    StructField("user_id",      IntegerType(),      nullable=True),
-    StructField("status",       StringType(),       nullable=True),
-    StructField("total_amount", DecimalType(12, 2), nullable=True),
-    StructField("created_at",   LongType(),         nullable=True),
-    StructField("updated_at",   LongType(),         nullable=True),
+    StructField("id",             IntegerType(),      nullable=True),
+    StructField("user_id",        IntegerType(),      nullable=True),
+    StructField("product_id",     StringType(),       nullable=True),
+    StructField("quantity",       IntegerType(),      nullable=True),
+    StructField("unit_price",     DecimalType(10, 2), nullable=True),
+    StructField("total_amount",   DecimalType(10, 2), nullable=True),
+    StructField("amount",         DecimalType(10, 2), nullable=True),
+    StructField("currency",       StringType(),       nullable=True),
+    StructField("payment_method", StringType(),       nullable=True),
+    StructField("status",         StringType(),       nullable=True),
+    StructField("created_at",     StringType(),       nullable=True),
+    StructField("updated_at",     StringType(),       nullable=True),
 ])
 
 _USERS_PAYLOAD = StructType([
-    StructField("user_id",      IntegerType(),      nullable=True),
-    StructField("username",     StringType(),       nullable=True),
+    StructField("id",           IntegerType(),      nullable=True),
+    StructField("name",         StringType(),       nullable=True),
     StructField("email",        StringType(),       nullable=True),
-    StructField("full_name",    StringType(),       nullable=True),
-    StructField("is_active",    BooleanType(),      nullable=True),
-    StructField("created_at",   LongType(),         nullable=True),
-    StructField("updated_at",   LongType(),         nullable=True),
+    StructField("phone",        StringType(),       nullable=True),
+    StructField("city",         StringType(),       nullable=True),
+    StructField("country",      StringType(),       nullable=True),
+    StructField("created_at",   StringType(),       nullable=True),
+    StructField("updated_at",   StringType(),       nullable=True),
 ])
 
 _ORDER_ITEMS_PAYLOAD = StructType([
