@@ -105,8 +105,10 @@ def process_silver_clickstream():
         .format("delta") \
         .outputMode("append") \
         .option("checkpointLocation", checkpoint_path) \
+        .partitionBy("event_date") \
         .trigger(availableNow=True) \
         .start(silver_path)
+
         
     query.awaitTermination()
     
