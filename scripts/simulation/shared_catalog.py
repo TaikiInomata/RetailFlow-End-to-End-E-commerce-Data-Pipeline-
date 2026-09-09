@@ -79,7 +79,10 @@ class SharedCatalog:
         """
         self._maybe_refresh()
         if not self._order_ids:
-            return None
+            # Force refresh if empty (happens at simulation startup when no completed orders exist yet)
+            self.refresh()
+            if not self._order_ids:
+                return None
         return random.choice(self._order_ids)
 
     def max_user_id(self) -> int:

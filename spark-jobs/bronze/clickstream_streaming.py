@@ -89,6 +89,7 @@ def get_clickstream_schema():
         StructField("cart_total",        FloatType(),   True),
         StructField("step",              StringType(),  True),
         StructField("pseudo_order_id",   StringType(),  True),
+        StructField("real_order_id",     IntegerType(), True),
         StructField("purchase_amount",   FloatType(),   True),
     ])
 

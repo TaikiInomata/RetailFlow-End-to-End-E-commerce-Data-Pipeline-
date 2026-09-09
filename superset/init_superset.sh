@@ -5,7 +5,8 @@
 #   1. Migrate database schema
 #   2. Tạo admin user
 #   3. Cài thêm driver: trino
-#   4. Khởi động Superset web server
+#   4. Đăng ký kết nối Trino (RetailFlow Trino)
+#   5. Khởi động Superset web server
 #
 # Chạy tự động khi container start lần đầu.
 # Các lần sau (db đã có) sẽ bỏ qua bước migrate+create user và chạy thẳng server.
@@ -36,6 +37,15 @@ superset fab create-admin \
 # ── Init default roles & permissions ──────────────────────────────────────
 echo "▶ Khởi tạo roles và permissions..."
 superset init
+
+# ── Đăng ký kết nối Trino (idempotent) ────────────────────────────────────
+# URI bắt buộc phải chỉ định catalog (minio) để Superset load được schema list.
+# Format: trino://<user>@<host>:<port>/<catalog>
+echo "▶ Đăng ký kết nối RetailFlow Trino..."
+superset set-database-uri \
+    --database-name "RetailFlow Trino" \
+    --uri "trino://admin@trino:8080/minio" 2>/dev/null \
+    || echo "  (Kết nối đã tồn tại — bỏ qua)"
 
 echo "=========================================="
 echo "  ✅ Superset đã sẵn sàng!"

@@ -13,6 +13,9 @@ SECRET_KEY = os.environ.get("SUPERSET_SECRET_KEY", "retailflow_superset_secret_k
 
 # ── Database (SQLite nội bộ để đơn giản — đủ cho portfolio demo) ─────────────
 SQLALCHEMY_DATABASE_URI = "sqlite:////app/superset_home/superset.db"
+SQLALCHEMY_ENGINE_OPTIONS = {
+    "connect_args": {"check_same_thread": False}
+}
 
 # ── Feature Flags ─────────────────────────────────────────────────────────────
 FEATURE_FLAGS = {
