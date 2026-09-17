@@ -128,12 +128,159 @@ Toàn bộ **4 Dashboards** được xây dựng trên **Apache Superset 4.x (EC
 
 **Cross-filter:** Click 1 category trên Bubble Chart → toàn bộ Dashboard tự filter theo category đó.
 
+---
 
+## 📊 Data Flow
+
+### Bronze Layer
+
+- **CDC:** Debezium đọc PostgreSQL WAL → Kafka Topic → Spark Structured Streaming → file JSON/Parquet trên MinIO `bronze-zone/`
+- **Exchange Rate:** Airflow DAG gọi REST API lúc 8:00 SA → lưu JSON vào `bronze-zone/exchange_rates/`
+- **Clickstream:** Simulation bot gửi event lên Kafka → Spark Streaming → `bronze-zone/clickstream/`
+
+### Silver Layer
+
+- **CDC → Delta Lake:** Spark Structured Streaming đọc file Bronze, chạy `MERGE INTO` để upsert vào các Delta table (`orders`, `products`, `users`). Checkpoint lưu offset đảm bảo exactly-once.
+- **Exchange Rate → Delta:** PySpark batch đọc JSON → forward-fill giá trị thiếu → ghi Delta `exchange_rates`
+- **Clickstream → Delta:** Spark Streaming đọc từ Kafka offset (Bronze checkpoint) → ghi Delta `clickstream`
+
+### Gold Layer (dbt + Trino)
+
+- **Trigger:** Airflow Datasets — DAG Gold chỉ chạy khi **cả hai** DAG CDC lẫn Clickstream signal hoàn tất
+- **Staging views:** `stg_orders`, `stg_products`, `stg_users`, `stg_exchange_rates`, `stg_clickstream` — views ảo không lưu dữ liệu
+- **5 Data Marts:** Tính toán incremental, chỉ xử lý dữ liệu mới, ghi bằng `delete+insert` với unique key
+
+### Maintenance
+
+- **Daily 3AM:** DAG `maintenance_pipeline` chạy `OPTIMIZE` (gom file nhỏ → 128MB) + `VACUUM` (xóa snapshot cũ 7 ngày)
+
+---
+
+## 🗂️ Gold Layer — Data Model (ERD)
+
+5 Data Marts được xây dựng từ các bảng **Silver Delta Lake**, transform bởi **dbt + Trino**:
+
+![Gold Layer ERD](images/Gold_ERD.svg)
+
+---
+
+### 📦 `gold_daily_sales_summary` — Doanh thu hàng ngày
+
+> **Grain:** 1 row per `(order_date × category × brand × payment_method × currency_group)`
+> **Nguồn:** `stg_orders` ⨝ `stg_products` ⨝ `stg_exchange_rates` | **Reprocess buffer:** 3 ngày
+
+| Nhóm | Cột | Ý nghĩa |
+|:---|:---|:---|
+| 🔑 **Composite PK** | `order_date`, `category`, `brand`, `payment_method`, `currency_group` | Grain của bảng — nhóm đơn hàng theo ngày × danh mục × thương hiệu |
+| ✅ **Completed** | `order_count`, `total_revenue_usd`, `avg_order_value_usd`, `total_quantity_sold` | Doanh thu thực tế đã hoàn thành — quy đổi USD qua `exchange_rate` |
+| ❌ **Cancelled** | `cancelled_count`, `cancellation_rate_pct` | Tỷ lệ hủy đơn (%) — Alert tự động khi > 10% |
+| ⏳ **Pending** | `pending_count`, `pending_revenue_usd` | Doanh thu tạm tính — CEO ước tính GMV cuối ngày Flash Sale |
+
+---
+
+### 📦 `gold_product_performance` — Hiệu suất sản phẩm theo tuần
+
+> **Grain:** 1 row per `(week_start × product_id)`
+> **Nguồn:** `stg_orders` ⨝ `stg_products` ⨝ `stg_exchange_rates` | `WHERE status = 'COMPLETED'` | **Pattern:** 2-layer CTE (aggregate → Window function) tránh Trino SQL Error
+
+| Nhóm | Cột | Ý nghĩa |
+|:---|:---|:---|
+| 🔑 **PK** | `week_start`, `product_id` | Tuần bắt đầu (DATE_TRUNC week) × mã sản phẩm |
+| 📊 **Dimension** | `product_name`, `category`, `brand` | Thông tin phân loại sản phẩm |
+| 💰 **Sales** | `units_sold`, `order_count`, `revenue_usd`, `avg_order_value_usd` | Tổng hợp doanh thu và số lượng bán trong tuần |
+| 🏆 **Ranking** | `revenue_rank_in_week`, `units_rank_in_week`, `total_products_in_week` | `RANK() OVER (PARTITION BY week_start ORDER BY revenue_usd DESC)` |
+| 🚩 **Flag** | `is_top_10_pct_revenue`, `is_top_3_revenue` | Đánh dấu sản phẩm thuộc Top 10% / Top 3 doanh thu tuần |
+
+---
+
+### 🎯 `gold_daily_funnel` — Phễu chuyển đổi hàng ngày
+
+> **Grain:** 1 row per `(event_date × device × referrer_category)`
+> **Nguồn:** `stg_clickstream` INNER JOIN `stg_orders` | **FIX:** `truly_completed_users` = subquery DISTINCT trước khi LEFT JOIN → tránh Fan-out (đếm nhân 3 lần)
+
+| Nhóm | Cột | Ý nghĩa |
+|:---|:---|:---|
+| 🔑 **PK** | `event_date`, `device`, `referrer_category` | Ngày × thiết bị × kênh traffic |
+| 🎯 **Funnel Steps** | `users_viewed_product` → `users_added_to_cart` → `users_initiated_checkout` → `users_confirmed_checkout` → `users_truly_completed` | 5 bước phễu — `users_truly_completed` JOIN trực tiếp `stg_orders WHERE status='COMPLETED'` để loại đơn ảo |
+| 📈 **CVR** | `view_to_cart_rate`, `cart_to_checkout_rate`, `true_purchase_rate` | Tỷ lệ chuyển đổi từng bước (%) — `true_purchase_rate` là KPI end-to-end quan trọng nhất |
+| 💤 **Bounce & Engagement** | `avg_session_duration_sec`, `avg_scroll_depth_pct`, `bounce_rate_pct` | Session chỉ có 1 event = bounce — Annotation ngưỡng cảnh báo 40% |
+
+---
+
+### 🎯 `gold_product_engagement` — Chất lượng tương tác theo sản phẩm
+
+> **Grain:** 1 row per `(event_date × product_id)`
+> **Nguồn:** `stg_clickstream (WHERE item_id IS NOT NULL)` LEFT JOIN `stg_products`
+
+| Nhóm | Cột | Ý nghĩa |
+|:---|:---|:---|
+| 🔑 **PK** | `event_date`, `product_id` | Ngày × mã sản phẩm |
+| 📊 **Dimension** | `product_name`, `category`, `brand` | Thông tin phân loại từ `stg_products` |
+| 👁️ **View** | `view_sessions`, `unique_viewers` | Lượng traffic tiếp cận sản phẩm (session-level và user-level) |
+| 🛒 **Cart** | `users_added_to_cart`, `view_to_cart_rate` | Tỷ lệ chuyển đổi view → thêm giỏ hàng per sản phẩm (%) |
+| 🔍 **Engagement** | `avg_view_duration_sec`, `avg_scroll_depth_pct` | Chất lượng tương tác — "khách đọc nhiều nhưng không mua" → vấn đề giá |
+| 🔎 **Search** | `search_impressions` | Số lần sản phẩm xuất hiện trong kết quả tìm kiếm → hỗ trợ SEO |
+
+---
+
+### 👤 `gold_customer_snapshot` — Phân khúc RFM khách hàng (SCD Type 2)
+
+> **Grain:** 1 row per `(snapshot_date × user_id)` — **Daily Append**
+> **Nguồn:** `stg_users` LEFT JOIN `(stg_orders ⨝ stg_exchange_rates)` | **Idempotent guard:** bỏ qua nếu snapshot hôm nay đã tồn tại | **Macro:** `rfm_segment(R, F, M)`
+
+| Nhóm | Cột | Ý nghĩa |
+|:---|:---|:---|
+| 🔑 **PK** | `snapshot_date`, `user_id` | SCD Type 2 — query được trạng thái phân khúc của bất kỳ ngày nào trong quá khứ |
+| 🧑 **Demographics** | `city`, `country`, `registration_date` | Thông tin địa lý khách hàng |
+| ⏱️ **RFM — R** | `days_since_last_order` | Recency — NULL nếu chưa mua lần nào |
+| 🔁 **RFM — F** | `total_orders`, `first_order_date`, `last_order_date`, `customer_lifespan_days` | Frequency — độ trung thành theo thời gian |
+| 💵 **RFM — M** | `total_revenue_usd`, `avg_order_value_usd`, `preferred_currency`, `preferred_payment` | Monetary — CLV quy đổi USD |
+| 🏷️ **Segment** | `customer_segment` | Output của macro `rfm_segment`: `Champions` · `Loyal` · `Promising` · `At Risk` · `New` · `Lost` |
+| ⭐ **Flag** | `is_high_value` | `TRUE` nếu `total_revenue_usd > $500` — ngưỡng xếp hạng VIP |
+
+---
+
+## 🔧 Pain Points & Solutions
+
+_Đây là những vấn đề kỹ thuật thực tế gặp phải khi xây dựng dự án:_
+
+| #   | Bài toán (Pain Point)                              | Thách thức đặc thù trong E-commerce                                                                                                       | Giải pháp Kiến trúc (Architecture Solution)                                                                                                               |
+| :-- | :------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **OLTP Database bị thắt nút cổ chai (Bottleneck)** | Truy vấn khối lượng lớn dữ liệu để làm báo cáo ngay trên Database bán hàng (Postgres) làm giảm tốc độ thanh toán lúc Flash Sale.          | Sử dụng kiến trúc **Debezium CDC + Kafka**. Bắt các thay đổi realtime ở mức Log (WAL) với chi phí tài nguyên cực thấp, giải phóng tải cho hệ thống nguồn. |
+| 2   | **Cập nhật trạng thái liên tục (Data Mutation)**   | Trạng thái Đơn hàng thay đổi liên tục (Pending → Shipped → Canceled). Định dạng Parquet thuần túy không hỗ trợ cập nhật bản ghi (UPDATE). | Sử dụng **Delta Lake** làm Storage Format. Hỗ trợ ACID Transactions với lệnh `MERGE INTO` giúp Upsert dữ liệu chính xác tuyệt đối.                        |
+| 3   | **Sự kiện Clickstream đến muộn (Late-arriving)**   | Khách hàng thao tác trên Web/App nhưng mạng lag, Event đẩy lên Kafka bị trễ hoặc sai thứ tự thời gian gây lệch phễu (Funnel).             | Áp dụng cơ chế **Watermarking** trong Spark Structured Streaming, cho phép độ trễ (delay threshold) nhất định trước khi chốt State tính toán.             |
+| 4   | **Vấn đề File siêu nhỏ (Small Files Problem)**     | Spark Streaming ghi dữ liệu liên tục sinh ra hàng ngàn file siêu nhỏ (KB) dưới MinIO, khiến Trino Query cực chậm do quá tải Metadata.     | Thiết lập Airflow DAG **Maintenance Pipeline** chạy lúc 3h sáng để tự động thực hiện `OPTIMIZE` (gom file) và `VACUUM` (xóa rác).                         |
+| 5   | **Xung đột tiến trình (Orchestration Hell)**       | DAG báo cáo doanh thu (Gold) chạy xong nhưng dữ liệu từ CDC hoặc API Tỷ giá lúc đó lại chưa đồng bộ kịp, dẫn đến số liệu sai lệch.        | Ứng dụng **Airflow Datasets (Data-Aware Scheduling)**. Hủy bỏ lịch CRON cứng cứng nhắc, Gold DAG chỉ tự động trigger khi các nhánh Silver hoàn tất.       |
+
+---
+
+## 📈 Tư duy Kiến trúc (Key Design Decisions)
+
+**1. Giải quyết "Nút thắt cổ chai" nhân sự (Data Democratization)**
+
+- **Quyết định:** Sử dụng Trino + dbt thay vì thuần PySpark cho tầng Gold.
+- **Lý luận (E-commerce Context):** Ngành bán lẻ có tốc độ thay đổi nhanh, yêu cầu báo cáo từ Marketing/Sales vô cùng dồn dập (ví dụ: đo lường Flash Sale). Nếu mọi logic đều viết bằng PySpark, đội Data Engineer (DE) sẽ bị kiệt sức. Bằng cách tách biệt Compute (Trino) / Storage (MinIO) và tích hợp **dbt**, hệ thống cho phép Analytics Engineers tự xây dựng Data Marts, Data Tests và tự sinh Docs chỉ bằng SQL. Time-to-market của dữ liệu được giảm từ nhiều tuần xuống vài giờ.
+
+**2. Tối ưu Chi phí và Đảm bảo Lũy đẳng (Cost Optimization & Idempotency)**
+
+- **Quyết định:** Dùng cơ chế `availableNow=True` (Micro-batch) trong Spark Streaming thay vì Continuous Streaming 24/7.
+- **Lý luận (E-commerce Context):** Duy trì cụm Spark 24/7 chỉ để chờ đọc CDC là sự lãng phí tài nguyên khủng khiếp về Cloud Cost. Việc áp dụng kiến trúc **Batch-on-Streaming** cho phép Spark bật lên định kỳ (ví dụ mỗi 15 phút), xử lý sạch backlogs trong Kafka rồi tự động tắt. Vẫn đảm bảo tính Near-realtime cần thiết cho luồng đơn hàng, nhưng tiết kiệm đến 80% chi phí Compute. Quản lý Offset qua Checkpoint của Spark cấu trúc đảm bảo tính lũy đẳng (Exactly-once) kể cả khi hệ thống sập.
+
+**3. Điều phối luồng dữ liệu thông minh (Event-driven Orchestration)**
+
+- **Quyết định:** Loại bỏ ExternalTaskSensor/CRON truyền thống, chuyển sang Airflow Datasets (Data-Aware Scheduling).
+- **Lý luận (E-commerce Context):** Lịch trình thời gian tĩnh (CRON) vô cùng "giòn gãy" (brittle) trước bài toán Dữ liệu đến muộn (Late-arriving) từ App/Web. Áp dụng Airflow Datasets giúp biến Pipeline thành luồng phản ứng (Reactive): Báo cáo doanh thu và Phễu (Gold DAG) chỉ tự động Trigger kích hoạt khi có "Tín hiệu" (Signal) rằng toàn bộ dữ liệu Đơn hàng (CDC) và Hành vi (Clickstream) ở tầng Silver đã hoàn tất cập nhật. Chấm dứt hoàn toàn tình trạng "Báo cáo chạy đúng giờ nhưng số liệu bằng 0".
+
+**4. Chống bùng nổ chi phí lưu trữ (Vendor Lock-in & Storage Cost)**
+
+- **Quyết định:** Xây dựng Open-source Lakehouse (MinIO + Delta + Trino) thay vì dùng Data Warehouse truyền thống.
+- **Lý luận (E-commerce Context):** Khối lượng dữ liệu Clickstream của E-commerce phình to lên hàng Terabyte/Petabyte rất nhanh. Nếu ném toàn bộ thô vào Cloud DWH sẽ làm bùng nổ Storage Cost. Kiến trúc Lakehouse giữ chi phí lưu trữ ở mức đáy (MinIO/S3), đồng thời Delta Lake cấp quyền năng ACID (UPDATE/DELETE) cho Parquet. Tách bạch hoàn toàn Storage và Compute giúp dễ dàng Auto-scale độc lập khi vào các mùa Big Sale.
+
+---
 
 ## 🚀 Quick Start
 
 **Yêu cầu:** Docker Desktop ≥ 4.20, Git, 16GB RAM khuyến nghị
-
 
 ```bash
 # 1. Clone repository
@@ -184,110 +331,6 @@ docker compose --env-file .env -f docker/docker-compose.yml --profile simulation
 
 > [!TIP]
 > Quá trình Simulation sẽ tự động dừng lại khi sinh đủ số lượng event được thiết lập tại biến `CLICKSTREAM_MAX_EVENTS` hoặc hết thời gian tối đa `SIMULATION_MAX_HOURS` trong file `.env`.
-
----
-
-## 📊 Data Flow
-
-### Bronze Layer
-
-- **CDC:** Debezium đọc PostgreSQL WAL → Kafka Topic → Spark Structured Streaming → file JSON/Parquet trên MinIO `bronze-zone/`
-- **Exchange Rate:** Airflow DAG gọi REST API lúc 8:00 SA → lưu JSON vào `bronze-zone/exchange_rates/`
-- **Clickstream:** Simulation bot gửi event lên Kafka → Spark Streaming → `bronze-zone/clickstream/`
-
-### Silver Layer
-
-- **CDC → Delta Lake:** Spark Structured Streaming đọc file Bronze, chạy `MERGE INTO` để upsert vào các Delta table (`orders`, `products`, `users`). Checkpoint lưu offset đảm bảo exactly-once.
-- **Exchange Rate → Delta:** PySpark batch đọc JSON → forward-fill giá trị thiếu → ghi Delta `exchange_rates`
-- **Clickstream → Delta:** Spark Streaming đọc từ Kafka offset (Bronze checkpoint) → ghi Delta `clickstream`
-
-### Gold Layer (dbt + Trino)
-
-- **Trigger:** Airflow Datasets — DAG Gold chỉ chạy khi **cả hai** DAG CDC lẫn Clickstream signal hoàn tất
-- **Staging views:** `stg_orders`, `stg_products`, `stg_users`, `stg_exchange_rates`, `stg_clickstream` — views ảo không lưu dữ liệu
-- **5 Data Marts:** Tính toán incremental, chỉ xử lý dữ liệu mới, ghi bằng `delete+insert` với unique key
-
-### Maintenance
-
-- **Daily 3AM:** DAG `maintenance_pipeline` chạy `OPTIMIZE` (gom file nhỏ → 128MB) + `VACUUM` (xóa snapshot cũ 7 ngày)
-
----
-
-## 🗂️ Gold Layer — Data Model (ERD)
-
-5 Data Marts được xây dựng từ các bảng **Silver Delta Lake**, transform bởi **dbt + Trino**:
-
-### 📦 Sales Analytics
-
-**`gold_daily_sales_summary`** — Doanh thu hàng ngày theo danh mục, quy đổi USD
-
-![ERD gold_daily_sales_summary](images/daily_sales_summary.svg)
-
----
-
-**`gold_product_performance`** — Hiệu suất bán hàng theo sản phẩm, tổng hợp theo tuần
-
-![ERD gold_product_performance](images/product_performance.svg)
-
----
-
-### 🔍 Funnel Analytics
-
-**`gold_daily_funnel`** — Conversion Funnel hàng ngày theo device và kênh traffic
-
-![ERD gold_daily_funnel](images/clickstream.svg)
-
----
-
-**`gold_product_engagement`** — Engagement metrics theo sản phẩm và ngày
-
-![ERD gold_product_engagement](images/product_engagement.svg)
-
----
-
-### 👤 Customer 360
-
-**`gold_customer_snapshot`** — Snapshot phân khúc RFM khách hàng (SCD Type 2 — Daily Append)
-
-![ERD gold_customer_snapshot](images/customer_snapshot.svg)
-
----
-
-## 🔧 Pain Points & Solutions
-
-_Đây là những vấn đề kỹ thuật thực tế gặp phải khi xây dựng dự án:_
-
-| #   | Bài toán (Pain Point)                              | Thách thức đặc thù trong E-commerce                                                                                                       | Giải pháp Kiến trúc (Architecture Solution)                                                                                                               |
-| :-- | :------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **OLTP Database bị thắt nút cổ chai (Bottleneck)** | Truy vấn khối lượng lớn dữ liệu để làm báo cáo ngay trên Database bán hàng (Postgres) làm giảm tốc độ thanh toán lúc Flash Sale.          | Sử dụng kiến trúc **Debezium CDC + Kafka**. Bắt các thay đổi realtime ở mức Log (WAL) với chi phí tài nguyên cực thấp, giải phóng tải cho hệ thống nguồn. |
-| 2   | **Cập nhật trạng thái liên tục (Data Mutation)**   | Trạng thái Đơn hàng thay đổi liên tục (Pending → Shipped → Canceled). Định dạng Parquet thuần túy không hỗ trợ cập nhật bản ghi (UPDATE). | Sử dụng **Delta Lake** làm Storage Format. Hỗ trợ ACID Transactions với lệnh `MERGE INTO` giúp Upsert dữ liệu chính xác tuyệt đối.                        |
-| 3   | **Sự kiện Clickstream đến muộn (Late-arriving)**   | Khách hàng thao tác trên Web/App nhưng mạng lag, Event đẩy lên Kafka bị trễ hoặc sai thứ tự thời gian gây lệch phễu (Funnel).             | Áp dụng cơ chế **Watermarking** trong Spark Structured Streaming, cho phép độ trễ (delay threshold) nhất định trước khi chốt State tính toán.             |
-| 4   | **Vấn đề File siêu nhỏ (Small Files Problem)**     | Spark Streaming ghi dữ liệu liên tục sinh ra hàng ngàn file siêu nhỏ (KB) dưới MinIO, khiến Trino Query cực chậm do quá tải Metadata.     | Thiết lập Airflow DAG **Maintenance Pipeline** chạy lúc 3h sáng để tự động thực hiện `OPTIMIZE` (gom file) và `VACUUM` (xóa rác).                         |
-| 5   | **Xung đột tiến trình (Orchestration Hell)**       | DAG báo cáo doanh thu (Gold) chạy xong nhưng dữ liệu từ CDC hoặc API Tỷ giá lúc đó lại chưa đồng bộ kịp, dẫn đến số liệu sai lệch.        | Ứng dụng **Airflow Datasets (Data-Aware Scheduling)**. Hủy bỏ lịch CRON cứng cứng nhắc, Gold DAG chỉ tự động trigger khi các nhánh Silver hoàn tất.       |
-
----
-
-## 📈 Tư duy Kiến trúc (Key Design Decisions)
-
-**1. Giải quyết "Nút thắt cổ chai" nhân sự (Data Democratization)**
-
-- **Quyết định:** Sử dụng Trino + dbt thay vì thuần PySpark cho tầng Gold.
-- **Lý luận (E-commerce Context):** Ngành bán lẻ có tốc độ thay đổi nhanh, yêu cầu báo cáo từ Marketing/Sales vô cùng dồn dập (ví dụ: đo lường Flash Sale). Nếu mọi logic đều viết bằng PySpark, đội Data Engineer (DE) sẽ bị kiệt sức. Bằng cách tách biệt Compute (Trino) / Storage (MinIO) và tích hợp **dbt**, hệ thống cho phép Analytics Engineers tự xây dựng Data Marts, Data Tests và tự sinh Docs chỉ bằng SQL. Time-to-market của dữ liệu được giảm từ nhiều tuần xuống vài giờ.
-
-**2. Tối ưu Chi phí và Đảm bảo Lũy đẳng (Cost Optimization & Idempotency)**
-
-- **Quyết định:** Dùng cơ chế `availableNow=True` (Micro-batch) trong Spark Streaming thay vì Continuous Streaming 24/7.
-- **Lý luận (E-commerce Context):** Duy trì cụm Spark 24/7 chỉ để chờ đọc CDC là sự lãng phí tài nguyên khủng khiếp về Cloud Cost. Việc áp dụng kiến trúc **Batch-on-Streaming** cho phép Spark bật lên định kỳ (ví dụ mỗi 15 phút), xử lý sạch backlogs trong Kafka rồi tự động tắt. Vẫn đảm bảo tính Near-realtime cần thiết cho luồng đơn hàng, nhưng tiết kiệm đến 80% chi phí Compute. Quản lý Offset qua Checkpoint của Spark cấu trúc đảm bảo tính lũy đẳng (Exactly-once) kể cả khi hệ thống sập.
-
-**3. Điều phối luồng dữ liệu thông minh (Event-driven Orchestration)**
-
-- **Quyết định:** Loại bỏ ExternalTaskSensor/CRON truyền thống, chuyển sang Airflow Datasets (Data-Aware Scheduling).
-- **Lý luận (E-commerce Context):** Lịch trình thời gian tĩnh (CRON) vô cùng "giòn gãy" (brittle) trước bài toán Dữ liệu đến muộn (Late-arriving) từ App/Web. Áp dụng Airflow Datasets giúp biến Pipeline thành luồng phản ứng (Reactive): Báo cáo doanh thu và Phễu (Gold DAG) chỉ tự động Trigger kích hoạt khi có "Tín hiệu" (Signal) rằng toàn bộ dữ liệu Đơn hàng (CDC) và Hành vi (Clickstream) ở tầng Silver đã hoàn tất cập nhật. Chấm dứt hoàn toàn tình trạng "Báo cáo chạy đúng giờ nhưng số liệu bằng 0".
-
-**4. Chống bùng nổ chi phí lưu trữ (Vendor Lock-in & Storage Cost)**
-
-- **Quyết định:** Xây dựng Open-source Lakehouse (MinIO + Delta + Trino) thay vì dùng Data Warehouse truyền thống.
-- **Lý luận (E-commerce Context):** Khối lượng dữ liệu Clickstream của E-commerce phình to lên hàng Terabyte/Petabyte rất nhanh. Nếu ném toàn bộ thô vào Cloud DWH sẽ làm bùng nổ Storage Cost. Kiến trúc Lakehouse giữ chi phí lưu trữ ở mức đáy (MinIO/S3), đồng thời Delta Lake cấp quyền năng ACID (UPDATE/DELETE) cho Parquet. Tách bạch hoàn toàn Storage và Compute giúp dễ dàng Auto-scale độc lập khi vào các mùa Big Sale.
 
 ---
 
