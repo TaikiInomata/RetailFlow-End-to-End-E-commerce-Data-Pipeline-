@@ -149,6 +149,8 @@ def build_event_payload(
         payload["page_url"]    = f"{BASE_URL}/products/{item_id.lower()}"
         # Lệch phải: đa số page view ngắn (mode 20s), rất ít người ờ hơn 2 phút
         payload["duration_ms"] = int(random.triangular(5_000, 180_000, 20_000))
+        # Thêm scroll_depth_pct vào view_item để gold_product_engagement có thể tính toán
+        payload["scroll_depth_pct"] = int(random.triangular(10, 100, 40))
 
     elif event_type == "scroll":
         payload["page_url"] = random.choices(

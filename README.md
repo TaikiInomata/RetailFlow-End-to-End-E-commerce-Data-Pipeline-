@@ -52,9 +52,88 @@ Dự án **RetailFlow** được thiết kế như một giải pháp nền tả
 
 ---
 
+## 📊 Business Intelligence & Analytics Dashboards (Apache Superset)
+
+Toàn bộ **4 Dashboards** được xây dựng trên **Apache Superset 4.x (ECharts)**, truy vấn trực tiếp qua **Trino MPP Query Engine** trên nền tầng **Gold Data Marts (Delta Lake)**. Cấu hình Dashboard có thể import/export dạng JSON tại `superset/exports/` — đảm bảo **tính tái sử dụng 100%** (clone repo → import → chạy ngay).
+
+---
+
+### 1. 👔 Executive Summary — Tổng quan Điều hành (C-Level)
+
+> **Đối tượng:** CEO, General Manager, C-Level Executives
+> **Câu hỏi trả lời:** GMV hôm nay là bao nhiêu? Nhịp đơn hàng đang tăng hay giảm? CVR toàn kênh?
+
+![Executive Summary Dashboard](images/dashboard_1_executive_summary.jpg)
+
+**Charts trong Dashboard:**
+- 🔢 KPIs: GMV hôm nay · Orders hôm nay · CVR · AOV — cập nhật theo từng ngày.
+- 📊 **Mixed Chart (Dual Y-Axis):** So sánh tổng doanh thu (USD) và số lượng đơn hàng trên cùng một biểu đồ → phát hiện tức thì tình huống "doanh thu tăng nhưng AOV giảm" (nhiều đơn giá rẻ) hay ngược lại.
+- 🌳 **Treemap:** Phân bổ đóng góp doanh thu theo Category × Brand theo nguyên lý Pareto 80/20.
+- 🎯 **Funnel Chart:** Phễu chuyển đổi 5 bước `View → Cart → Checkout → Confirm → Completed`.
+- 📊 **Stacked Bar:** Biến động tệp phân khúc khách hàng RFM (Champions / Loyal / At Risk / Lost) theo 12 tuần.
+
+**Native Filters:** `Date Range` · `Category` · `Payment Method`
+
+---
+
+### 2. 🛒 Sales Deep Dive — Phân tích Doanh thu Chuyên sâu
+
+> **Đối tượng:** Head of Sales, Merchandising Planners, Inventory Team
+> **Câu hỏi trả lời:** Danh mục nào đang có tỷ lệ hủy đơn cao bất thường? Sản phẩm nào là "gà đẻ trứng vàng" tuần này? GMV cuối ngày Flash Sale ước đạt bao nhiêu?
+
+![Sales Deep Dive Dashboard](images/dashboard_2_sales_deep_dive.jpg)
+
+**Charts trong Dashboard:**
+- 📊 **GMV & Order Volume theo ngày:** Biểu đồ kép Mixed Chart — phát hiện tương quan giữa volume đơn và giá trị doanh thu.
+- 📊 **Cancellation Rate theo Danh mục:** Bar Chart nằm ngang + Annotation ngưỡng cảnh báo đỏ tại 10% → Operations nhận diện danh mục cần điều tra vận hành ngay.
+- 🏆 **Top 10 Sản phẩm Bán chạy (Weekly Leaderboard):** Table Chart với Data Bars trực quan — hiển thị `revenue_rank_in_week` để phát hiện sản phẩm bán nhiều nhưng doanh thu thấp (hàng giá rẻ cần upsell).
+- 🌳 **Treemap:** Đóng góp doanh thu theo Category × Brand — Purchasing team nhìn vào để quyết định nhập thêm hàng nào.
+- 📊 **Dự báo GMV cuối ngày:** Big Number Monitor — `SUM(total_revenue_usd) + SUM(pending_revenue_usd)` → CEO theo dõi tiến độ Flash Sale theo giờ.
+
+**Alert tự động:** `cancellation_rate_pct > 10%` → Email/Slack lúc 9h sáng mỗi ngày.
+
+---
+
+### 3. 👥 Customer 360 CRM — Phân khúc & Giữ chân Khách hàng
+
+> **Đối tượng:** CRM Team, Growth Marketers, Customer Success
+> **Câu hỏi trả lời:** Số lượng khách VIP đang tăng hay đang chảy sang At Risk? Cần re-engage bao nhiêu khách ngay hôm nay?
+
+![Customer 360 CRM Dashboard](images/dashboard_3_customer_crm.jpg)
+
+**Charts trong Dashboard:**
+- 🔢 **Total VIP Customers:** Đếm tổng `is_high_value = true` với Trendline → theo dõi tốc độ tăng trưởng tệp khách VIP.
+- 🔢 **At Risk VIPs (Cần Action):** Đếm VIPs rơi vào `customer_segment IN ('At Risk', 'Lost')` → chỉ số báo động đỏ.
+- 📊 **Segment Migration Stacked Bar:** Xu hướng di cư phân khúc RFM theo tuần/tháng — hệ thống cảnh báo sớm (Early Warning System) trước khi doanh thu sụt giảm 30–90 ngày.
+- 📋 **Action Table — At Risk VIPs:** Top 100 khách VIP (CLV > $500) đang `At Risk / Lost` → Export ngay để đội CRM gọi điện/gửi voucher cá nhân hóa.
+- 📊 **CLV Histogram by Segment:** Phân phối `total_revenue_usd` theo từng phân khúc → đánh giá ngưỡng $500 VIP có còn hợp lý không.
+
+> **Kỹ thuật đặc biệt:** Bảng `gold_customer_snapshot` dùng **SCD Type 2 (daily append)** → có thể query lại trạng thái phân khúc của bất kỳ ngày nào trong quá khứ.
+
+---
+
+### 4. 🎯 Funnel & Traffic Analytics — Phễu Chuyển đổi & Chất lượng Engagement
+
+> **Đối tượng:** Product Growth, UI/UX, Performance Marketing
+> **Câu hỏi trả lời:** Khách đang drop-off ở bước nào trong phễu? Kênh traffic nào có CVR đang xuống phong độ? Sản phẩm nào có traffic cao nhưng không chuyển đổi?
+
+![Funnel and Traffic Dashboard](images/dashboard_4_funnel_traffic.jpg)
+
+**Charts trong Dashboard:**
+- 🎯 **Conversion Funnel (Phễu 5 bước):** `View → Cart → Checkout → Confirm → Truly Completed` — loại trừ đơn thanh toán ảo bằng cách JOIN trực tiếp với `stg_orders WHERE status = 'COMPLETED'`.
+- 📊 **CVR Trend theo Kênh Traffic:** Line Chart so sánh `true_purchase_rate` theo `referrer_category` (Organic vs Paid Ads vs Social vs Email) + Rolling 7 ngày để giảm nhiễu cuối tuần.
+- 📊 **Bounce Rate & Engagement theo Device:** Bar Chart nhóm Mobile/Desktop/Tablet + Annotation ngưỡng cảnh báo 40% → phát hiện thiết bị nào cần tối ưu tốc độ tải trang.
+- 📊 **Engagement Quality Pivot Table:** Ma trận `product × week` — cross `avg_view_duration_sec` × `avg_scroll_depth_pct` × `view_to_cart_rate` → tìm sản phẩm "khách đọc nhiều nhưng không mua" (vấn đề giá, không phải content).
+- ⚪ **4-Quadrant Bubble Chart:** Phân loại sản phẩm (Ngôi sao 🌟 / Chảy máu traffic 😰 / Viên ngọc ẩn 💎 / Bỏ qua 💀) theo ma trận `avg_view_duration` × `view_to_cart_rate`, kích thước bong bóng theo `view_sessions`.
+
+**Cross-filter:** Click 1 category trên Bubble Chart → toàn bộ Dashboard tự filter theo category đó.
+
+
+
 ## 🚀 Quick Start
 
 **Yêu cầu:** Docker Desktop ≥ 4.20, Git, 16GB RAM khuyến nghị
+
 
 ```bash
 # 1. Clone repository
